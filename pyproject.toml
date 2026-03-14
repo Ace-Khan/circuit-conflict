@@ -1,0 +1,48 @@
+[project]
+name = "circuit-conflict"
+version = "0.1.0"
+description = "Mechanistic interpretability: finding arbitration circuits in GPT-2 Small"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "transformer-lens>=2.7.0",
+    "torch>=2.3.0",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "plotly>=5.22",
+    "kaleido>=0.2",          # static plotly export
+    "datasets>=2.20",
+    "huggingface-hub>=0.23",
+    "scipy>=1.13",
+    "jupyterlab>=4.2",
+    "ipykernel>=6.29",
+    "ipywidgets>=8.1",
+    "tqdm>=4.66",
+    "einops>=0.8",
+    "jaxtyping>=0.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/circuit_conflict"]
+
+[tool.uv]
+dev-dependencies = [
+    "nbconvert>=7.16",
+    "black>=24.0",
+    "isort>=5.13",
+]
+
+[tool.uv.sources]
+# Pin torch to the CPU/MPS build (no CUDA needed on Apple Silicon)
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
