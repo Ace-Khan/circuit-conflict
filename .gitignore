@@ -12,19 +12,17 @@ build/
 .venv/
 venv/
 
-# uv
-.python-version
-uv.lock
-
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_metadata
 
-# Data — track CSV prompts but not large tensors
+# Results — track summary CSV/JSON metrics, not regenerable intermediate arrays.
+# (NOTE: the pipeline writes .npy, not .pt/.pkl — the old rules never matched anything.)
+data/results/**/*.npy
 data/results/**/*.pt
 data/results/**/*.pkl
 
-# Figures — track final PNGs/PDFs, not raw plotly JSON
+# Figures — track final PNG/PDF, not raw plotly JSON
 figures/*.json
 
 # macOS
@@ -33,6 +31,3 @@ figures/*.json
 # VS Code
 .vscode/settings.json
 *.code-workspace
-
-# TransformerLens model cache
-~/.cache/huggingface/
