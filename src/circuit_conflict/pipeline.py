@@ -173,11 +173,13 @@ def main(effect_floor: float = 0.05, top_k: int = 10, seed: int = 0) -> None:
     abl.to_csv(RESULTS / "phase3" / "ablation_results.csv", index=False)
 
     print("\n[5/5] Cross-category overlap with null models")
-    selector_fdr = lambda e: M.select_head_set(M.paired_head_stats(e), effect_floor=effect_floor)
-    selector_topk = lambda e: M.top_k_head_set(M.paired_head_stats(e), k=top_k)
+    # fast_top_k_selector is exactly equivalent to top_k_head_set (both rank on
+    # |median effect|) but skips 144 Wilcoxon tests per resample, which is what
+    # makes 10,000 permutations take seconds rather than half an hour.
+    selector_topk = M.fast_top_k_selector(top_k)
 
     tbl_topk = M.compile_cross_category_table(
-        topk_sets, effects, selector_topk, n_perm=200, n_boot=200, seed=seed)
+        topk_sets, effects, selector_topk, n_perm=10000, n_boot=10000, seed=seed)
     tbl_topk.insert(0, "selection", f"top{top_k}")
     tbl_topk.to_csv(RESULTS / "phase4" / "cross_category_topk.csv", index=False)
 

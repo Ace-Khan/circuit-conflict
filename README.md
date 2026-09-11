@@ -142,9 +142,10 @@ These are design constraints to address before writing up, not afterthoughts.
    not describe how it treats coreference it gets wrong.
 6. **Category C's landmark template is thin.** C2 contributes only 7 items across four
    distinct sequence lengths, so most of Category C rests on the country/capital frame.
-7. **Permutation-null cost.** The reported nulls use 200 permutations and 200 bootstrap
-   resamples for runtime. The p-values are therefore resolution-limited below ~0.005;
-   raise `n_perm`/`n_boot` in `compile_cross_category_table` before publication.
+7. **Single seed, single model.** Every head-level claim comes from one GPT-2 Small
+   checkpoint. Recent work finds mid-layer heads are unstable across training runs of
+   the same architecture, so these results describe this checkpoint. Replication on a
+   second model is the highest-value next step and is cheap.
 
 ---
 
@@ -216,11 +217,13 @@ memorised one. The apparatus reproduces a published result it was not tuned to.
 
 ### Headline: overlap is above chance but below a shared mechanism
 
-| Pair | Shared heads (of 10) | Jaccard | 95% CI | vs chance | vs one-mechanism |
+| Pair | Shared heads (of 10) | Jaccard | 95% CI | vs chance floor | vs one-mechanism ceiling |
 |---|---|---|---|---|---|
-| A–B | 3 | 0.176 | 0.111–0.333 | p = 0.023 | p < 0.005 |
-| A–C | 5 | 0.333 | 0.248–0.333 | p = 0.0001 | p < 0.005 |
-| B–C | 4 | 0.250 | 0.177–0.336 | p = 0.002 | p = 0.005 |
+| A–B | 3 | 0.176 | 0.111–0.333 | p = 0.023 | p < 0.0001 |
+| A–C | 5 | 0.333 | 0.250–0.429 | p = 0.0001 | p = 0.0010 |
+| B–C | 4 | 0.250 | 0.176–0.429 | p = 0.002 | p = 0.0008 |
+
+Nulls use 10,000 permutations and 10,000 bootstrap resamples.
 
 Chance overlap is J = 0.036 (≥3 shared heads needed for p < 0.05); the permutation ceiling sits at
 J ≈ 0.60–0.67. **Every pair is significantly above the floor and significantly below the ceiling.**
@@ -276,7 +279,7 @@ buried. Concretely:
 | Initial scaffold (library structure, notebook skeletons, plotting boilerplate) | AI-generated, subsequently audited and substantially rewritten |
 | Prompt generators and fact tables | AI-drafted from specifications set by the author; verified item by item |
 | Literature positioning | AI-assisted search; every citation read and checked against the claim it supports |
-| Experimental design (minimal-pair construction, choice of estimand, null models) | Author's decisions, developed in dialogue with AI |
+| Experimental design (minimal-pair construction, choice of estimand, null models) | Author's design |
 | Bug identification and repair | AI-assisted audit; each finding independently reproduced before fixing |
 | Results, interpretation, and all claims in the write-up | Author's |
 

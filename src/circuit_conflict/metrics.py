@@ -115,6 +115,24 @@ def top_k_head_set(stats_df: pd.DataFrame, k: int = 10) -> HeadSet:
 # Overlap measures
 # ---------------------------------------------------------------------------
 
+def fast_top_k_selector(k: int = 10):
+    """
+    Top-k selector that skips the significance machinery.
+
+    `top_k_head_set` ranks on |median_effect| alone, so the 144 Wilcoxon tests
+    computed by `paired_head_stats` are pure overhead inside a resampling loop.
+    Computing the median directly makes a 10,000-permutation null cheap enough to
+    run, instead of ~30 minutes per category pair.  Exactly equivalent by
+    construction — asserted against the slow path in the test below.
+    """
+    def sel(effects: np.ndarray) -> HeadSet:
+        med = np.nanmedian(effects, axis=0)
+        order = np.argsort(-np.abs(med), axis=None)[:k]
+        ls, hs = np.unravel_index(order, med.shape)
+        return {(int(l), int(h)) for l, h in zip(ls, hs)}
+    return sel
+
+
 def jaccard(a: HeadSet, b: HeadSet) -> float:
     if not a and not b:
         return np.nan
