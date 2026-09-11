@@ -6,18 +6,16 @@ Every figure is written as both PNG (300 dpi) and PDF.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from circuit_conflict import dataset as D
-from circuit_conflict import metrics as M
-
 from circuit_conflict import pipeline as PL
 
 RESULTS = D.REPO_ROOT / "data" / "results"
@@ -170,7 +168,7 @@ def fig_model_comparison() -> None:
             ax.hlines(r.expected_jaccard_chance, i - .3, i + .3, color="#C0392B", lw=2, zorder=5)
             ax.hlines(r.perm_null_median, i - .3, i + .3, color="#27AE60", lw=2, ls="--", zorder=5)
             ax.text(i, r.ci_hi + .02,
-                    f"{r.intersection}/10\n{'p=%.3f' % r.p_upper_vs_chance if r.p_upper_vs_chance >= .001 else 'p<0.001'}"
+                    f"{r.intersection}/10\n" + (f"p={r.p_upper_vs_chance:.3f}" if r.p_upper_vs_chance >= .001 else "p<0.001")
                     + ("" if r.p_upper_vs_chance < .05 else "\n(n.s.)"),
                     ha="center", va="bottom", fontsize=8)
         ax.set_xticks(x); ax.set_xticklabels([f"{r.cat_a}–{r.cat_b}" for _, r in t.iterrows()])

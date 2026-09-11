@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
@@ -159,7 +158,7 @@ LANDMARK_CITY = [
 ]
 
 
-def filter_single_token(model, words: List[str]) -> Tuple[List[str], List[str]]:
+def filter_single_token(model, words: list[str]) -> tuple[list[str], list[str]]:
     """Split `words` into (kept, rejected) by single-token-ness."""
     from circuit_conflict.utils import is_single_token
     kept, rejected = [], []
@@ -187,7 +186,7 @@ def build_minimal_pair(
     answer_A: str,
     answer_B: str,
     n_expected_diff: int = 1,
-) -> List[dict]:
+) -> list[dict]:
     """
     Build one conflict/control row pair, or raise PairRejected.
 
@@ -196,14 +195,16 @@ def build_minimal_pair(
     dataset, so no downstream phase has to defend against one.
     """
     from circuit_conflict.utils import (
-        require_single_token, token_diff_positions, find_token_position,
+        find_token_position,
+        require_single_token,
+        token_diff_positions,
     )
 
     try:
         tok_A = require_single_token(model, answer_A)
         tok_B = require_single_token(model, answer_B)
     except ValueError as e:
-        raise PairRejected(f"answer not single-token: {e}")
+        raise PairRejected(f"answer not single-token: {e}") from e
 
     if tok_A == tok_B:
         raise PairRejected(f"answer_A and answer_B are the same token ({answer_A!r})")
@@ -272,7 +273,7 @@ TEMPLATE_A = "When {n1} and {n2} went to the store, he bought a drink. The buyer
 PROBE_A = "{n1} and {n2} were talking quietly. He said hello. The speaker was"
 
 
-def build_category_a_df(model, n_items: int = 40, seed: int = 0) -> Tuple[pd.DataFrame, List[dict]]:
+def build_category_a_df(model, n_items: int = 40, seed: int = 0) -> tuple[pd.DataFrame, list[dict]]:
     """
     Category A -- referential conflict between two candidate antecedents.
 
@@ -294,7 +295,7 @@ def build_category_a_df(model, n_items: int = 40, seed: int = 0) -> Tuple[pd.Dat
               for f1 in females]
     rng.shuffle(combos)
 
-    rows: List[dict] = []
+    rows: list[dict] = []
     idx = 0
     seen = set()
     for m1, f1, m2 in combos:
@@ -341,7 +342,7 @@ TEMPLATE_B2 = ("Question: name a color. Hint one: the answer is {w1}. "
                "Hint two: the answer is {w2}. Answer: the answer is")
 
 
-def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> Tuple[pd.DataFrame, List[dict]]:
+def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> tuple[pd.DataFrame, list[dict]]:
     import random
     rng = random.Random(seed)
 
@@ -351,7 +352,7 @@ def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> Tuple[pd.Dat
     combos = [(a, b) for a, b in itertools.permutations(words, 2)]
     rng.shuffle(combos)
 
-    rows: List[dict] = []
+    rows: list[dict] = []
     idx = 0
     for w_first, w_other in combos:
         if len(rows) // 2 >= n_items:
@@ -403,19 +404,20 @@ TEMPLATE_C2 = ("Fact: the {entity} is in {city}. "
                "Answer: the {entity} is in")
 
 
-def build_category_c_df(model, n_items: int = 30, seed: int = 2) -> Tuple[pd.DataFrame, List[dict]]:
+def build_category_c_df(model, n_items: int = 30, seed: int = 2) -> tuple[pd.DataFrame, list[dict]]:
     import random
+
     from circuit_conflict.utils import is_single_token
     rng = random.Random(seed)
 
-    rejects: List[dict] = []
+    rejects: list[dict] = []
     cc = [(e, c) for e, c in COUNTRY_CAPITAL if is_single_token(model, c)]
     lc = [(e, c) for e, c in LANDMARK_CITY if is_single_token(model, c)]
     for e, c in COUNTRY_CAPITAL + LANDMARK_CITY:
         if not is_single_token(model, c):
             rejects.append({"item": e, "reason": f"city {c!r} not single-token"})
 
-    rows: List[dict] = []
+    rows: list[dict] = []
     idx = 0
     specs = [("C1", TEMPLATE_C1, cc), ("C2", TEMPLATE_C2, lc)]
 
@@ -488,7 +490,7 @@ def run_preconditions(model, df: pd.DataFrame, verbose: bool = True) -> pd.DataF
     probe prompts, and the mean |margin| must exceed ln 2.
     """
     df = df.copy()
-    results: Dict[str, Tuple[bool, float]] = {}
+    results: dict[str, tuple[bool, float]] = {}
 
     for item_id, grp in df.groupby("item_id"):
         conf = grp[grp.arm == "conflict"].iloc[0]

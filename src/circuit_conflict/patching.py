@@ -30,20 +30,20 @@ whole-sequence norm was neither.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 import torch
-from transformer_lens import HookedTransformer, utils as tl_utils
+from transformer_lens import HookedTransformer
+from transformer_lens import utils as tl_utils
 
 from circuit_conflict.utils import answer_direction, logit_diff_batched
-
 
 # ---------------------------------------------------------------------------
 # Hook factories
 # ---------------------------------------------------------------------------
 
-def _make_patch_head_hook(src_z: torch.Tensor, head: int, positions: Optional[Sequence[int]]):
+def _make_patch_head_hook(src_z: torch.Tensor, head: int, positions: Sequence[int] | None):
     """
     Write `src_z`'s head activations into the running model.
 
@@ -68,7 +68,7 @@ def _make_patch_head_hook(src_z: torch.Tensor, head: int, positions: Optional[Se
     return hook_fn
 
 
-def _make_mean_ablate_hook(mean_z: torch.Tensor, head: int, positions: Optional[Sequence[int]]):
+def _make_mean_ablate_hook(mean_z: torch.Tensor, head: int, positions: Sequence[int] | None):
     """
     Replace a head's output with its mean over the control distribution.
 
@@ -95,7 +95,7 @@ def _make_mean_ablate_hook(mean_z: torch.Tensor, head: int, positions: Optional[
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def cache_z(model: HookedTransformer, tokens: torch.Tensor) -> Tuple[torch.Tensor, Dict[int, torch.Tensor]]:
+def cache_z(model: HookedTransformer, tokens: torch.Tensor) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
     """Run the model, returning (logits, {layer: z}) for all layers."""
     names = {tl_utils.get_act_name("z", L): L for L in range(model.cfg.n_layers)}
     logits, cache = model.run_with_cache(
@@ -105,7 +105,7 @@ def cache_z(model: HookedTransformer, tokens: torch.Tensor) -> Tuple[torch.Tenso
 
 
 @torch.no_grad()
-def mean_z_over_prompts(model: HookedTransformer, tokens: torch.Tensor) -> Dict[int, torch.Tensor]:
+def mean_z_over_prompts(model: HookedTransformer, tokens: torch.Tensor) -> dict[int, torch.Tensor]:
     """
     Mean `z` over a batch of equal-length prompts, per layer.
 
@@ -201,9 +201,9 @@ def patch_heads(
     token_A: torch.Tensor,
     token_B: torch.Tensor,
     position_readout: int = -1,
-    patch_positions: Optional[Sequence[int]] = None,
+    patch_positions: Sequence[int] | None = None,
     verbose: bool = False,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
     Patch every head from the source run into the destination run.
 
@@ -271,11 +271,11 @@ def ablate_heads(
     tokens: torch.Tensor,
     token_A: torch.Tensor,
     token_B: torch.Tensor,
-    mean_z: Dict[int, torch.Tensor],
-    heads: Sequence[Tuple[int, int]],
+    mean_z: dict[int, torch.Tensor],
+    heads: Sequence[tuple[int, int]],
     position_readout: int = -1,
-    ablate_positions: Optional[Sequence[int]] = None,
-) -> Dict[str, np.ndarray]:
+    ablate_positions: Sequence[int] | None = None,
+) -> dict[str, np.ndarray]:
     """
     Mean-ablate each of `heads` in turn; report the change in logit difference.
 
@@ -307,9 +307,9 @@ def ablate_head_layer_curve(
     token_B: int,
     layer_abl: int,
     head_abl: int,
-    mean_z: Dict[int, torch.Tensor],
+    mean_z: dict[int, torch.Tensor],
     position: int = -1,
-    ablate_positions: Optional[Sequence[int]] = None,
+    ablate_positions: Sequence[int] | None = None,
 ) -> np.ndarray:
     """
     Logit-lens curve with one head mean-ablated.  Returns (n_layers,).

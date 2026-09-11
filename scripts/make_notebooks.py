@@ -1,6 +1,7 @@
 """Regenerate the phase notebooks as thin, readable wrappers over the library."""
-import nbformat as nbf
 from pathlib import Path
+
+import nbformat as nbf
 
 NB = Path(__file__).resolve().parents[1] / "notebooks"
 HEADER = """import sys, pathlib
@@ -122,11 +123,16 @@ print(f"{len(admitted)//2} admitted items")"""),
 Items are batched by `(category, template, length, slot position)`. Grouping on template alone is
 invalid when a template has a multi-token filler — those items differ in length and cannot share a
 forward pass."""),
-("code", """effects, behavioural = PL.run_patching(model, admitted)
+("code", """effects, behavioural, descriptive = PL.run_patching(model, admitted)
 for c, e in effects.items():
     np.save(PL.RESULTS / "phase1" / f"effects_{c}.npy", e)
+    np.save(PL.RESULTS / "phase1" / f"dla_{c}.npy", descriptive["dla"][c])
+    np.save(PL.RESULTS / "phase1" / f"attn_slot_{c}.npy", descriptive["attn"][c])
     print(f"  {c}: effects {e.shape}")
 behavioural.to_csv(PL.RESULTS / "phase1" / "behavioural.csv", index=False)"""),
+("md", """`run_patching` also returns two descriptive measures alongside the causal one: direct logit
+attribution at the decision site (paired conflict − control) and attention from the decision site
+to the swapped token. Head selection uses only the causal effect; these corroborate it."""),
 ("md", """## Behavioural summary
 
 `d_conflict` > 0 means the slot/context channel wins the conflict; < 0 means the other channel does."""),

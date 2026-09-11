@@ -14,9 +14,8 @@ token sequences of a minimal pair, which is exact.
 
 from __future__ import annotations
 
-import torch
 import numpy as np
-from typing import List, Tuple, Optional, Dict
+import torch
 from transformer_lens import HookedTransformer
 
 from circuit_conflict import compat
@@ -41,7 +40,7 @@ def get_device() -> torch.device:
 # Model loading
 # ---------------------------------------------------------------------------
 
-def load_model(model_name: str = "gpt2", device: Optional[torch.device] = None,
+def load_model(model_name: str = "gpt2", device: torch.device | None = None,
                verbose: bool = True) -> HookedTransformer:
     """
     Load a model via TransformerLens.
@@ -90,7 +89,7 @@ def is_single_token(model: HookedTransformer, word: str, with_space: bool = True
     return model.to_tokens(text, prepend_bos=False).shape[1] == 1
 
 
-def resolve_answer(model: HookedTransformer, answer: str) -> Dict[str, object]:
+def resolve_answer(model: HookedTransformer, answer: str) -> dict[str, object]:
     """
     Non-raising answer resolution.
 
@@ -125,7 +124,7 @@ def get_answer_token_id(model: HookedTransformer, answer: str) -> int:
     return require_single_token(model, answer)
 
 
-def decode_top_k(model: HookedTransformer, logits: torch.Tensor, k: int = 5) -> List[Tuple[str, float]]:
+def decode_top_k(model: HookedTransformer, logits: torch.Tensor, k: int = 5) -> list[tuple[str, float]]:
     """Return top-k (token_string, probability) pairs from a vocab-dim logit vector."""
     probs = torch.softmax(logits.float(), dim=-1)
     top = torch.topk(probs, k)
@@ -137,7 +136,7 @@ def decode_top_k(model: HookedTransformer, logits: torch.Tensor, k: int = 5) -> 
 # Minimal-pair position recovery
 # ---------------------------------------------------------------------------
 
-def token_diff_positions(tokens_a: torch.Tensor, tokens_b: torch.Tensor) -> List[int]:
+def token_diff_positions(tokens_a: torch.Tensor, tokens_b: torch.Tensor) -> list[int]:
     """
     Indices where two equal-length token sequences differ.
 
@@ -154,7 +153,7 @@ def token_diff_positions(tokens_a: torch.Tensor, tokens_b: torch.Tensor) -> List
     return (a != b).nonzero(as_tuple=True)[0].tolist()
 
 
-def find_token_position(tokens: torch.Tensor, token_id: int, last: bool = True) -> Optional[int]:
+def find_token_position(tokens: torch.Tensor, token_id: int, last: bool = True) -> int | None:
     """
     Position of `token_id` in a (1, seq) or (seq,) tensor.
 

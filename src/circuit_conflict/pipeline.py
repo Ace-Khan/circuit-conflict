@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -57,22 +56,41 @@ def _group_tensors(model, grp: pd.DataFrame):
     return conf, ctrl, t_conf, t_ctrl, tA, tB, pos
 
 
-def run_patching(model, df: pd.DataFrame, verbose: bool = True) -> Tuple[Dict[str, np.ndarray], pd.DataFrame]:
+def run_patching(model, df: pd.DataFrame, verbose: bool = True):
     """
-    Phase 1+3 core: position-resolved patching, control -> conflict, per category.
+    Phase 1+3 core, per category:
 
-    Returns ({category: (n_items, 12, 12) effects}, per-item behavioural table).
+      - position-resolved patching  (causal; drives head selection)
+      - direct logit attribution    (descriptive, paired conflict - control)
+      - attention to the slot       (descriptive)
+
+    Returns (effects, behavioural, descriptive) where `effects` and each entry of
+    `descriptive` are {category: (n_items, n_layers, n_heads)}.
     """
-    effects: Dict[str, List[np.ndarray]] = {c: [] for c in CATEGORIES}
+    effects: dict[str, list[np.ndarray]] = {c: [] for c in CATEGORIES}
+    dla: dict[str, list[np.ndarray]] = {c: [] for c in CATEGORIES}
+    attn: dict[str, list[np.ndarray]] = {c: [] for c in CATEGORIES}
     behav_rows = []
 
     for (cat, tid, _nt, _ps), grp in df.groupby(BATCH_KEY):
-        conf, ctrl, t_conf, t_ctrl, tA, tB, pos = _group_tensors(model, grp)
+        conf, _ctrl, t_conf, t_ctrl, tA, tB, pos = _group_tensors(model, grp)
         if verbose:
             print(f"  {cat}/{tid}: {len(conf)} items, seq={t_conf.shape[1]}")
+
         r = P.patch_heads(model, t_conf, t_ctrl, tA, tB,
                           position_readout=pos["p_end"])
         effects[cat].append(r["effect"])
+
+        # paired within-item DLA difference: both arms are token-aligned, so
+        # p_end is the same index and length cannot enter the comparison
+        d_conf = P.head_dla(model, t_conf, tA, tB, position=pos["p_end"])
+        d_ctrl = P.head_dla(model, t_ctrl, tA, tB, position=pos["p_end"])
+        dla[cat].append(d_conf - d_ctrl)
+
+        # attention from the decision site to the swapped token
+        attn[cat].append(
+            P.head_attn_to(model, t_conf, pos["p_end"], [pos["p_slot"]])[..., 0])
+
         for i, item in enumerate(conf.item_id):
             behav_rows.append({
                 "item_id": item, "category": cat, "template_id": tid,
@@ -80,8 +98,8 @@ def run_patching(model, df: pd.DataFrame, verbose: bool = True) -> Tuple[Dict[st
                 "swing": r["d_src"][i] - r["d_dst"][i],
             })
 
-    out = {c: np.concatenate(v, axis=0) for c, v in effects.items() if v}
-    return out, pd.DataFrame(behav_rows)
+    join = lambda d: {c: np.concatenate(v, axis=0) for c, v in d.items() if v}
+    return join(effects), pd.DataFrame(behav_rows), {"dla": join(dla), "attn": join(attn)}
 
 
 def run_logit_lens(model, df: pd.DataFrame) -> pd.DataFrame:
@@ -107,7 +125,7 @@ def run_logit_lens(model, df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_ablation(model, df: pd.DataFrame, head_sets: Dict[str, M.HeadSet]) -> pd.DataFrame:
+def run_ablation(model, df: pd.DataFrame, head_sets: dict[str, M.HeadSet]) -> pd.DataFrame:
     """
     Causal confirmation: mean-ablate each selected head on the conflict arm.
 
@@ -120,7 +138,7 @@ def run_ablation(model, df: pd.DataFrame, head_sets: Dict[str, M.HeadSet]) -> pd
         heads = sorted(head_sets.get(cat, set()))
         if not heads:
             continue
-        conf, ctrl, t_conf, t_ctrl, tA, tB, pos = _group_tensors(model, grp)
+        conf, _ctrl, t_conf, t_ctrl, tA, tB, pos = _group_tensors(model, grp)
         mean_z = P.mean_z_over_prompts(model, t_ctrl)
         r = P.ablate_heads(model, t_conf, tA, tB, mean_z, heads,
                            position_readout=pos["p_end"])
@@ -168,11 +186,13 @@ def main(model_name: str = "gpt2", effect_floor: float = 0.05,
     print(f"\nAdmitted {len(admitted)//2} items of {len(df)//2} generated")
     print(D.precondition_report(df).to_string(index=False))
 
-    print("\n[1/5] Position-resolved patching")
-    effects, behav = run_patching(model, admitted)
+    print("\n[1/5] Patching, direct logit attribution, attention")
+    effects, behav, desc = run_patching(model, admitted)
     behav.to_csv(RESULTS / "phase1" / "behavioural.csv", index=False)
     for c, e in effects.items():
         np.save(RESULTS / "phase1" / f"effects_{c}.npy", e)
+        np.save(RESULTS / "phase1" / f"dla_{c}.npy", desc["dla"][c])
+        np.save(RESULTS / "phase1" / f"attn_slot_{c}.npy", desc["attn"][c])
 
     print("\n[2/5] Logit lens")
     lens = run_logit_lens(model, admitted)
@@ -196,6 +216,17 @@ def main(model_name: str = "gpt2", effect_floor: float = 0.05,
         topk_sets[c] = M.top_k_head_set(s, k=top_k)
         print(f"  {c}: {len(head_sets[c])} FDR-significant heads, "
               f"top-{top_k} set size {len(topk_sets[c])}")
+
+    # descriptive layer: does the causally-selected head also write the answer
+    # direction at the decision site, and attend to the swapped token?
+    desc_rows = []
+    for c in stats_by_cat:
+        dla_m = np.nanmedian(desc["dla"][c], axis=0)
+        attn_m = np.nanmedian(desc["attn"][c], axis=0)
+        for (L, h) in sorted(topk_sets[c]):
+            desc_rows.append({"category": c, "layer": L, "head_idx": h,
+                              "dla_delta": dla_m[L, h], "attn_to_slot": attn_m[L, h]})
+    pd.DataFrame(desc_rows).to_csv(RESULTS / "phase3" / "descriptive.csv", index=False)
 
     print("\n[4/5] Ablation confirmation")
     abl = run_ablation(model, admitted, topk_sets)
@@ -222,10 +253,9 @@ def main(model_name: str = "gpt2", effect_floor: float = 0.05,
     rho = M.rank_correlation_across_categories(scores)
     rho.to_csv(RESULTS / "phase4" / "rank_correlation.csv", index=False)
 
-    json.dump({c: sorted(map(list, s)) for c, s in head_sets.items()},
-              open(RESULTS / "phase3" / "head_sets_fdr.json", "w"), indent=2)
-    json.dump({c: sorted(map(list, s)) for c, s in topk_sets.items()},
-              open(RESULTS / "phase3" / "head_sets_topk.json", "w"), indent=2)
+    for name, sets in (("head_sets_fdr", head_sets), ("head_sets_topk", topk_sets)):
+        (RESULTS / "phase3" / f"{name}.json").write_text(
+            json.dumps({c: sorted(map(list, v)) for c, v in sets.items()}, indent=2))
 
     print("\n" + "=" * 72)
     print("CROSS-CATEGORY OVERLAP (top-k selection)")

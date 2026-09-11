@@ -17,14 +17,13 @@ arbitration, rather than a bare null result.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-
-HeadSet = Set[Tuple[int, int]]
+HeadSet = set[tuple[int, int]]
 
 
 # ---------------------------------------------------------------------------
@@ -67,26 +66,26 @@ def paired_head_stats(effects: np.ndarray) -> pd.DataFrame:
     unpaired Welch's t-test: the design produces token-aligned pairs, and an
     unpaired test discards exactly the pairing the design exists to create.
     """
-    n_items, n_layers, n_heads = effects.shape
+    _, n_layers, n_heads = effects.shape
     rows = []
     for L in range(n_layers):
         for h in range(n_heads):
             v = effects[:, L, h]
             v = v[~np.isnan(v)]
             if v.size < 3 or np.allclose(v, 0):
-                stat, p = np.nan, np.nan
+                p = np.nan
             else:
                 try:
-                    stat, p = stats.wilcoxon(v)
+                    _, p = stats.wilcoxon(v)
                 except ValueError:
-                    stat, p = np.nan, np.nan
+                    p = np.nan
             rows.append({
                 "layer": L, "head_idx": h,
                 "mean_effect": float(np.mean(v)) if v.size else np.nan,
                 "median_effect": float(np.median(v)) if v.size else np.nan,
                 "se": float(np.std(v, ddof=1) / np.sqrt(v.size)) if v.size > 1 else np.nan,
                 "n": int(v.size),
-                "p_value": float(p) if p == p else np.nan,
+                "p_value": float(p) if not np.isnan(p) else np.nan,
             })
     df = pd.DataFrame(rows)
     df["fdr_significant"] = bh_fdr(df.p_value.values, q=0.05)
@@ -150,7 +149,7 @@ def overlap_coefficient(a: HeadSet, b: HeadSet) -> float:
 # Null I — uniform random k-subsets (exact)
 # ---------------------------------------------------------------------------
 
-def jaccard_null_uniform(k_a: int, k_b: int, n_heads: int = 144) -> Dict[str, float]:
+def jaccard_null_uniform(k_a: int, k_b: int, n_heads: int = 144) -> dict[str, float]:
     """
     Exact chance distribution of overlap between independent uniform subsets.
 
@@ -171,7 +170,7 @@ def jaccard_null_uniform(k_a: int, k_b: int, n_heads: int = 144) -> Dict[str, fl
         "expected_intersection": exp_m,
         "expected_jaccard": exp_m / (k_a + k_b - exp_m),
         "min_intersection_p05": m05,
-        "min_jaccard_p05": (m05 / (k_a + k_b - m05)) if m05 == m05 else np.nan,
+        "min_jaccard_p05": (m05 / (k_a + k_b - m05)) if not np.isnan(float(m05)) else np.nan,
     }
 
 
@@ -187,7 +186,7 @@ def jaccard_p_upper(k_a: int, k_b: int, observed_intersection: int, n_heads: int
 # ---------------------------------------------------------------------------
 
 def jaccard_null_label_permutation(
-    effects_by_cat: Dict[str, np.ndarray],
+    effects_by_cat: dict[str, np.ndarray],
     cat_a: str,
     cat_b: str,
     selector,
@@ -220,13 +219,13 @@ def jaccard_null_label_permutation(
 
 
 def jaccard_bootstrap_ci(
-    effects_by_cat: Dict[str, np.ndarray],
+    effects_by_cat: dict[str, np.ndarray],
     cat_a: str,
     cat_b: str,
     selector,
     n_boot: int = 1000,
     seed: int = 0,
-) -> Tuple[float, float, np.ndarray]:
+) -> tuple[float, float, np.ndarray]:
     """
     Percentile bootstrap CI for the observed Jaccard.
 
@@ -248,7 +247,7 @@ def jaccard_bootstrap_ci(
 # Threshold-free backstop
 # ---------------------------------------------------------------------------
 
-def rank_correlation_across_categories(scores_by_cat: Dict[str, np.ndarray]) -> pd.DataFrame:
+def rank_correlation_across_categories(scores_by_cat: dict[str, np.ndarray]) -> pd.DataFrame:
     """
     Spearman rho between full 144-head effect vectors for every category pair.
 
@@ -266,7 +265,7 @@ def rank_correlation_across_categories(scores_by_cat: Dict[str, np.ndarray]) -> 
     return pd.DataFrame(rows)
 
 
-def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 10, 20, 30),
+def overlap_vs_k(stats_by_cat: dict[str, pd.DataFrame], ks: Sequence[int] = (5, 10, 20, 30),
                  n_heads: int = 144) -> pd.DataFrame:
     """Jaccard at several k, so the result is not an artefact of one threshold."""
     cats = sorted(stats_by_cat)
@@ -290,7 +289,7 @@ def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 
 # Phase transition (logit-lens curves)
 # ---------------------------------------------------------------------------
 
-def detect_phase_transition(layer_diffs: np.ndarray) -> Optional[int]:
+def detect_phase_transition(layer_diffs: np.ndarray) -> int | None:
     """
     First layer at which the logit-difference curve crosses zero, else None.
 
@@ -306,7 +305,7 @@ def detect_phase_transition(layer_diffs: np.ndarray) -> Optional[int]:
     return None
 
 
-def phase_transition_stats(transitions: Sequence[Optional[float]]) -> Dict[str, float]:
+def phase_transition_stats(transitions: Sequence[float | None]) -> dict[str, float]:
     """NaN-safe summary (values round-trip through CSV, where None becomes NaN)."""
     vals = [float(t) for t in transitions
             if t is not None and not (isinstance(t, float) and np.isnan(t))]
@@ -330,8 +329,8 @@ def phase_transition_stats(transitions: Sequence[Optional[float]]) -> Dict[str, 
 # ---------------------------------------------------------------------------
 
 def compile_cross_category_table(
-    head_sets: Dict[str, HeadSet],
-    effects_by_cat: Dict[str, np.ndarray],
+    head_sets: dict[str, HeadSet],
+    effects_by_cat: dict[str, np.ndarray],
     selector,
     n_perm: int = 2000,
     n_boot: int = 1000,
@@ -355,6 +354,7 @@ def compile_cross_category_table(
                 "cat_a": a, "cat_b": b,
                 "n_a": len(sa), "n_b": len(sb), "intersection": inter,
                 "jaccard": j,
+                "overlap_coefficient": overlap_coefficient(sa, sb),
                 "ci_lo": lo, "ci_hi": hi,
                 "expected_jaccard_chance": null1["expected_jaccard"],
                 "p_upper_vs_chance": jaccard_p_upper(len(sa), len(sb), inter, n_heads),

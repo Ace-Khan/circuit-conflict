@@ -301,10 +301,8 @@ buried. Concretely:
 | Literature positioning | AI-assisted search; every citation read and checked against the claim it supports |
 | Experimental design (minimal-pair construction, choice of estimand, null models) | Author's design |
 | Bug identification and repair | AI-assisted audit; each finding independently reproduced before fixing |
+| Test suite | AI-drafted against invariants specified by the author |
 | Results, interpretation, and all claims in the write-up | Author's |
-
-Commits containing AI-assisted work carry a `Co-Authored-By` trailer, so the
-provenance is visible in the history rather than asserted only here.
 
 **What this does not mean.** No result in this repository is reported on the
 authority of a language model. Every number is produced by the committed code
