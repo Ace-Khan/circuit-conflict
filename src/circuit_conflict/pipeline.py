@@ -23,7 +23,13 @@ from circuit_conflict import metrics as M
 from circuit_conflict import patching as P
 from circuit_conflict.utils import load_model, logit_lens_diff
 
-RESULTS = D.REPO_ROOT / "data" / "results"
+RESULTS_ROOT = D.REPO_ROOT / "data" / "results"
+RESULTS = RESULTS_ROOT          # default (gpt2); rebound per-model by main()
+
+
+def results_dir(model_name: str = "gpt2") -> Path:
+    """Per-model results tree. gpt2 keeps the flat layout it was first written to."""
+    return RESULTS_ROOT if model_name == "gpt2" else RESULTS_ROOT / D.model_slug(model_name)
 
 # Items are batched only when they agree on template, length AND slot position.
 # Grouping on template alone is not sufficient: a template with a multi-token
@@ -129,12 +135,35 @@ def run_ablation(model, df: pd.DataFrame, head_sets: Dict[str, M.HeadSet]) -> pd
     return pd.DataFrame(rows)
 
 
-def main(effect_floor: float = 0.05, top_k: int = 10, seed: int = 0) -> None:
+def build_dataset(model, model_name: str) -> pd.DataFrame:
+    """Generate and gate the dataset for one model (never reuse another model's)."""
+    frames, rejects = [], []
+    for fn in (D.build_category_a_df, D.build_category_b_df, D.build_category_c_df):
+        f, r = fn(model); frames.append(f); rejects += r
+    df = pd.concat(frames, ignore_index=True)
+    print(f"  built {len(df)//2} items, {len(rejects)} rejected")
+    df = D.run_preconditions(model, df)
+    D.save_prompts(df, D.prompts_path(model_name))
+    return df
+
+
+def main(model_name: str = "gpt2", effect_floor: float = 0.05,
+         top_k: int = 10, seed: int = 0, rebuild: bool = False) -> None:
+    global RESULTS
+    RESULTS = results_dir(model_name)
     for sub in ("phase1", "phase2", "phase3", "phase4"):
         (RESULTS / sub).mkdir(parents=True, exist_ok=True)
 
-    model = load_model()
-    df = D.load_prompts()
+    model = load_model(model_name)
+    n_heads_total = model.cfg.n_layers * model.cfg.n_heads
+    print(f"  {model.cfg.n_layers} layers x {model.cfg.n_heads} heads = {n_heads_total} heads")
+
+    path = D.prompts_path(model_name)
+    if rebuild or not path.exists():
+        print("\n[0/5] Building dataset for this model")
+        df = build_dataset(model, model_name)
+    else:
+        df = D.load_prompts(path)
     admitted = df[df.passes_precondition].copy()
     print(f"\nAdmitted {len(admitted)//2} items of {len(df)//2} generated")
     print(D.precondition_report(df).to_string(index=False))
@@ -179,14 +208,15 @@ def main(effect_floor: float = 0.05, top_k: int = 10, seed: int = 0) -> None:
     selector_topk = M.fast_top_k_selector(top_k)
 
     tbl_topk = M.compile_cross_category_table(
-        topk_sets, effects, selector_topk, n_perm=10000, n_boot=10000, seed=seed)
+        topk_sets, effects, selector_topk, n_perm=10000, n_boot=10000, seed=seed,
+        n_heads=n_heads_total)
     tbl_topk.insert(0, "selection", f"top{top_k}")
     tbl_topk.to_csv(RESULTS / "phase4" / "cross_category_topk.csv", index=False)
 
-    ovk = M.overlap_vs_k(stats_by_cat)
+    ovk = M.overlap_vs_k(stats_by_cat, n_heads=n_heads_total)
     ovk.to_csv(RESULTS / "phase4" / "overlap_vs_k.csv", index=False)
 
-    scores = {c: stats_by_cat[c].pivot(index="layer", columns="head",
+    scores = {c: stats_by_cat[c].pivot(index="layer", columns="head_idx",
                                        values="median_effect").values
               for c in stats_by_cat}
     rho = M.rank_correlation_across_categories(scores)
@@ -206,4 +236,9 @@ def main(effect_floor: float = 0.05, top_k: int = 10, seed: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="gpt2")
+    ap.add_argument("--rebuild", action="store_true")
+    a = ap.parse_args()
+    main(model_name=a.model, rebuild=a.rebuild)

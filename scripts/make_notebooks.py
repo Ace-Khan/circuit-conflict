@@ -267,11 +267,18 @@ Writes PNG (300 dpi) and PDF for every figure to `figures/`."""),
 ("code", HEADER),
 ("code", """from circuit_conflict import figures as F
 F.main()"""),
-("md", "## Headline figure"),
+("md", """## Headline figure
+
+Both models side by side. The "below a shared mechanism" result holds in both; the "above chance"
+result does not survive the move to Pythia-410M."""),
 ("code", """from IPython.display import Image, display
-display(Image(filename=str(F.FIGDIR / "fig2_cross_category_overlap.png"), width=780))"""),
-("code", """for n in ["fig1_head_maps", "fig3_overlap_vs_k", "fig4_logit_lens", "fig5_ablation"]:
-    display(Image(filename=str(F.FIGDIR / f"{n}.png"), width=880))"""),
+display(Image(filename=str(F.FIGDIR / "fig0_model_comparison.png"), width=980))"""),
+("md", "## Per-model detail"),
+("code", """for model in F.MODELS:
+    print(f"===== {model} =====")
+    for n in ["fig1_head_maps", "fig2_cross_category_overlap",
+              "fig3_overlap_vs_k", "fig4_logit_lens", "fig5_ablation"]:
+        display(Image(filename=str(F.FIGDIR / f"{n}_{model}.png"), width=880))"""),
 ],
 }
 

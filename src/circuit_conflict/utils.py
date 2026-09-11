@@ -19,6 +19,10 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict
 from transformer_lens import HookedTransformer
 
+from circuit_conflict import compat
+
+compat.apply_all()
+
 
 # ---------------------------------------------------------------------------
 # Device
@@ -37,9 +41,10 @@ def get_device() -> torch.device:
 # Model loading
 # ---------------------------------------------------------------------------
 
-def load_model(device: Optional[torch.device] = None, verbose: bool = True) -> HookedTransformer:
+def load_model(model_name: str = "gpt2", device: Optional[torch.device] = None,
+               verbose: bool = True) -> HookedTransformer:
     """
-    Load GPT-2 Small via TransformerLens.
+    Load a model via TransformerLens.
 
     fold_ln / center_writing_weights / center_unembed apply the standard
     pre-processing that makes activation patching and direct logit attribution
@@ -50,7 +55,7 @@ def load_model(device: Optional[torch.device] = None, verbose: bool = True) -> H
         device = get_device()
 
     model = HookedTransformer.from_pretrained(
-        "gpt2",
+        model_name,
         fold_ln=True,
         center_writing_weights=True,
         center_unembed=True,
@@ -58,7 +63,7 @@ def load_model(device: Optional[torch.device] = None, verbose: bool = True) -> H
     )
     model.eval()
     if verbose:
-        print(f"Loaded GPT-2 Small on {device}")
+        print(f"Loaded {model_name} on {device}")
         print(f"  n_layers={model.cfg.n_layers}, n_heads={model.cfg.n_heads}, "
               f"d_model={model.cfg.d_model}, d_head={model.cfg.d_head}")
     return model

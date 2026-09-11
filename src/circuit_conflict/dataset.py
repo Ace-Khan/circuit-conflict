@@ -57,7 +57,24 @@ import torch
 # the repo root.  (This was parents[3], which resolved OUTSIDE the repo and
 # silently wrote prompts.csv into the parent directory.)
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PROMPTS_CSV = REPO_ROOT / "data" / "prompts" / "prompts.csv"
+PROMPTS_DIR = REPO_ROOT / "data" / "prompts"
+PROMPTS_CSV = PROMPTS_DIR / "prompts.csv"   # default (gpt2)
+
+
+def model_slug(model_name: str) -> str:
+    """Filesystem-safe model identifier."""
+    return model_name.replace("/", "_")
+
+
+def prompts_path(model_name: str = "gpt2") -> Path:
+    """
+    Per-model prompt file.
+
+    The dataset is NOT model-portable: token ids, position indices, the
+    single-token vocabulary filter and the precondition gates are all specific to
+    one tokeniser and one model's behaviour.  A second model needs its own build.
+    """
+    return PROMPTS_DIR / f"prompts_{model_slug(model_name)}.csv"
 
 SCHEMA = [
     "item_id",              # pairing key, e.g. "B_007"

@@ -266,7 +266,8 @@ def rank_correlation_across_categories(scores_by_cat: Dict[str, np.ndarray]) -> 
     return pd.DataFrame(rows)
 
 
-def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 10, 20, 30)) -> pd.DataFrame:
+def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 10, 20, 30),
+                 n_heads: int = 144) -> pd.DataFrame:
     """Jaccard at several k, so the result is not an artefact of one threshold."""
     cats = sorted(stats_by_cat)
     rows = []
@@ -279,8 +280,8 @@ def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 
                     "k": k, "cat_a": a, "cat_b": b,
                     "intersection": inter,
                     "jaccard": jaccard(sets[a], sets[b]),
-                    "expected_jaccard": jaccard_null_uniform(k, k)["expected_jaccard"],
-                    "p_upper": jaccard_p_upper(k, k, inter),
+                    "expected_jaccard": jaccard_null_uniform(k, k, n_heads)["expected_jaccard"],
+                    "p_upper": jaccard_p_upper(k, k, inter, n_heads),
                 })
     return pd.DataFrame(rows)
 
@@ -335,6 +336,7 @@ def compile_cross_category_table(
     n_perm: int = 2000,
     n_boot: int = 1000,
     seed: int = 0,
+    n_heads: int = 144,
 ) -> pd.DataFrame:
     """One row per category pair with observed overlap, both nulls, and a CI."""
     cats = sorted(head_sets)
@@ -344,7 +346,7 @@ def compile_cross_category_table(
             sa, sb = head_sets[a], head_sets[b]
             inter = len(sa & sb)
             j = jaccard(sa, sb)
-            null1 = jaccard_null_uniform(len(sa), len(sb))
+            null1 = jaccard_null_uniform(len(sa), len(sb), n_heads)
             perm = jaccard_null_label_permutation(
                 effects_by_cat, a, b, selector, n_perm=n_perm, seed=seed)
             lo, hi, _ = jaccard_bootstrap_ci(
@@ -355,7 +357,7 @@ def compile_cross_category_table(
                 "jaccard": j,
                 "ci_lo": lo, "ci_hi": hi,
                 "expected_jaccard_chance": null1["expected_jaccard"],
-                "p_upper_vs_chance": jaccard_p_upper(len(sa), len(sb), inter),
+                "p_upper_vs_chance": jaccard_p_upper(len(sa), len(sb), inter, n_heads),
                 "perm_null_median": float(np.nanmedian(perm)),
                 "p_lower_vs_shared": float(np.nanmean(perm <= j)),
             })
