@@ -78,12 +78,18 @@ already established, and what is not:
 
 | Notebook | Phase | Description |
 |---|---|---|
-| `00_dataset_construction` | Dataset | Build & filter conflict/unambiguous prompt pairs |
-| `01_phase1_baseline_circuit_mapping` | Phase 1 | Map Circuit A & B in isolation via activation patching |
-| `02_phase2_conflict_experiment` | Phase 2 | Logit-lens curves + phase transition detection |
-| `03_phase3_arbitration_heads` | Phase 3 | Identify, ablate, and patch arbitration head candidates |
-| `04_phase4_metrics_statistics` | Phase 4 | Compute all paper metrics with standard errors |
-| `05_phase5_figures` | Phase 5 | Publication-quality figures |
+| `00_dataset_construction` | Dataset | Generate token-aligned minimal pairs; run precondition gates |
+| `01_phase1_patching` | Phase 1 | Position-resolved activation patching, control → conflict |
+| `02_phase2_logit_lens` | Phase 2 | Layer-wise logit-lens trajectories and phase transitions |
+| `03_phase3_arbitration_heads` | Phase 3 | Paired stats, FDR, head selection, mean-ablation |
+| `04_phase4_cross_category` | Phase 4 | Cross-category overlap against both null models |
+| `05_phase5_figures` | Phase 5 | Publication figures |
+
+Or run everything at once:
+
+```bash
+uv run python -m circuit_conflict.pipeline && uv run python -m circuit_conflict.figures
+```
 
 Phase 3 carries the result: per-category candidate heads are identified by
 conflict-vs-unambiguous activation delta, validated causally by ablation, and then
@@ -94,20 +100,18 @@ baselines that the overlap metric is computed on.
 
 ## Interpreting the outcomes
 
-Both directions are informative, but they are not equally strong, and neither is
-a new circuit type.
+Stated before the analysis was run, and retained here so the reasoning can be checked against
+what actually happened (see **Results**):
 
-**High overlap (supports H1).** Evidence that arbitration is a reusable,
-domain-general mechanism — a meaningful strengthening of the current literature,
-which has only ever demonstrated conflict heads one domain at a time. This is the
-stronger publishable outcome.
+- **High overlap** would mean arbitration is a reusable, domain-general mechanism — a real
+  strengthening of a literature that has only ever demonstrated conflict heads one domain at a time.
+- **Low overlap** would mean "conflict heads" are task-specific and that findings from any single
+  conflict domain should not be generalised — a result rather than a null, because it would be a
+  controlled confirmation of the transfer failures reported piecemeal in replication work.
 
-**Low overlap (supports H0).** Evidence that "conflict heads" are task-specific and
-that findings from any single conflict domain should not be generalised. This is a
-real result rather than a null, because it would be a controlled, single-model
-confirmation of the transfer failures already reported piecemeal in replication
-work — but it must be defended carefully against the alternative explanation that
-GPT-2 Small is simply too small to support a shared mechanism.
+The observed outcome was neither: overlap is significantly above chance *and* significantly below
+a shared mechanism. Partial sharing was not one of the two hypotheses, which is worth being
+explicit about rather than retrofitting it to whichever was closer.
 
 ---
 
@@ -131,9 +135,16 @@ These are design constraints to address before writing up, not afterthoughts.
 4. **Overlap needs a null model.** Jaccard overlap between two sets of *k* heads
    drawn from 144 has a nonzero chance baseline. Report overlap against a permutation
    null, not against zero.
-5. **Winograd difficulty.** GPT-2 Small performs near chance on WCS273. The margin
-   filter in Phase 0 selects for genuine ambiguity, but low absolute accuracy limits
-   how much signal the logit-difference metric carries.
+5. **Category A selection bias.** Only 62.5% of generated Category A items passed the
+   admission gate, versus 96% and 100% for B and C. Items were kept where the model
+   shows the gender-agreement effect, which is a selection on model behaviour. The
+   Category A head set is therefore conditioned on items the model handles, and may
+   not describe how it treats coreference it gets wrong.
+6. **Category C's landmark template is thin.** C2 contributes only 7 items across four
+   distinct sequence lengths, so most of Category C rests on the country/capital frame.
+7. **Permutation-null cost.** The reported nulls use 200 permutations and 200 bootstrap
+   resamples for runtime. The p-values are therefore resolution-limited below ~0.005;
+   raise `n_perm`/`n_boot` in `compile_cross_category_table` before publication.
 
 ---
 
@@ -171,30 +182,83 @@ uv run jupyter lab notebooks/
 ## Directory Structure
 
 ```
-circuit_conflict/
-├── pyproject.toml          # dependencies (uv)
-├── src/
-│   └── circuit_conflict/
-│       ├── utils.py        # model loading, logit lens, token helpers
-│       ├── dataset.py      # prompt loading, CSV management
-│       ├── patching.py     # activation patching & ablation hooks
-│       └── metrics.py      # statistics, phase transition, Jaccard
-├── notebooks/
-│   ├── 00_dataset_construction.ipynb
-│   ├── 01_phase1_baseline_circuit_mapping.ipynb
-│   ├── 02_phase2_conflict_experiment.ipynb
-│   ├── 03_phase3_arbitration_heads.ipynb
-│   ├── 04_phase4_metrics_statistics.ipynb
-│   └── 05_phase5_figures.ipynb
+circuit-conflict/
+├── pyproject.toml / uv.lock    # pinned environment
+├── src/circuit_conflict/
+│   ├── utils.py       # model loading, logit lens, token/position helpers
+│   ├── dataset.py     # minimal-pair generators + precondition gates
+│   ├── patching.py    # patching, direct logit attribution, mean-ablation
+│   ├── metrics.py     # paired stats, FDR, Jaccard null models
+│   ├── pipeline.py    # end-to-end runner
+│   └── figures.py     # publication figures
+├── notebooks/         # phases 0-5, one per notebook
+├── scripts/
+│   └── make_notebooks.py       # regenerates the notebooks from source
 ├── data/
-│   ├── prompts/            # prompts.csv (tracked by git)
-│   └── results/            # cached tensors & metric CSVs (not tracked)
-│       ├── phase1/
-│       ├── phase2/
-│       ├── phase3/
-│       └── phase4/
-└── figures/                # output figures (PNG + PDF)
+│   ├── prompts/prompts.csv     # generated dataset (tracked)
+│   └── results/                # metrics CSV/JSON tracked; .npy arrays not
+└── figures/                    # PNG + PDF
 ```
+
+---
+
+## Results
+
+Run on GPT-2 Small (MPS), 89 generated items, 73 admitted by the precondition gates
+(A 25/40, B 23/24, C 25/25). Reproduce with `uv run python -m circuit_conflict.pipeline`.
+
+### Pipeline validation
+
+Category C recovers **5 of Ortu et al. (2024)'s 6 published GPT-2 Small heads** in its top 10,
+occupying the top four slots by effect size — L10H0, L10H7, L10H10, L11H10, plus L9H9. The signs
+match their account: L10H0/L10H10/L9H9 promote the in-context answer, L10H7/L11H10 support the
+memorised one. The apparatus reproduces a published result it was not tuned to.
+
+### Headline: overlap is above chance but below a shared mechanism
+
+| Pair | Shared heads (of 10) | Jaccard | 95% CI | vs chance | vs one-mechanism |
+|---|---|---|---|---|---|
+| A–B | 3 | 0.176 | 0.111–0.333 | p = 0.023 | p < 0.005 |
+| A–C | 5 | 0.333 | 0.248–0.333 | p = 0.0001 | p < 0.005 |
+| B–C | 4 | 0.250 | 0.177–0.336 | p = 0.002 | p = 0.005 |
+
+Chance overlap is J = 0.036 (≥3 shared heads needed for p < 0.05); the permutation ceiling sits at
+J ≈ 0.60–0.67. **Every pair is significantly above the floor and significantly below the ceiling.**
+
+This supports neither H1 nor H0 cleanly. Arbitration in GPT-2 Small is **partially shared**: a
+small common core plus substantial task-specific machinery.
+
+Corroborating, threshold-free: Spearman ρ between full 144-head effect vectors is 0.45 (A–B),
+0.39 (A–C), 0.55 (B–C), all p < 1e-6. Overlap is stable across k = 5…30 (J ≈ 0.25–0.40), so the
+result is not an artefact of the k = 10 threshold.
+
+### The shared core
+
+Two heads appear in all three categories' top-10 sets:
+
+- **L10H0** — promotes the in-context / slot-supported answer
+- **L11H10** — supports the competing channel by suppression
+
+Both are Ortu et al. heads found independently here on coreference and instruction conflict, which
+is evidence they are not specific to factual override.
+
+### An asymmetry worth noting
+
+Mean-ablation effects are an order of magnitude larger in Category C (±1.8 logits) than in A
+(±0.27) or B (±0.14). Conflict resolution is far more localised for factual override than for
+coreference or instruction conflict — consistent with C being the family where prior work has most
+readily found clean circuits, and a caution against generalising from it.
+
+### Negative result: occupation-based Winograd items are unusable at this scale
+
+The first Category A design followed the Winograd template (*"The nurse is a man. The driver is a
+woman…"*). Swapping the stated gender moved GPT-2 Small's pronoun preference by **~0.1 logits** —
+0 of 32 items passed the reversal gate. The model runs on a fixed lexical prior over occupation
+pairs and effectively ignores the gender statement. Swapping a **name's** gender moves it by ~2.5
+logits. Category A was rebuilt on names, and passes at 62.5%.
+
+This is why WSC273 is not used for patching here: at this scale such items measure lexical priors,
+not coreference.
 
 ---
 
