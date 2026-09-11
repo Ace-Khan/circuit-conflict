@@ -1,0 +1,26 @@
+{
+  "A": {
+    "n_total": 25,
+    "n_detected": 20,
+    "detection_rate": 0.8,
+    "mean": 5.15,
+    "std": 3.3915529745158586,
+    "median": 4.5
+  },
+  "B": {
+    "n_total": 23,
+    "n_detected": 22,
+    "detection_rate": 0.9565217391304348,
+    "mean": 4.545454545454546,
+    "std": 3.474084637608023,
+    "median": 3.0
+  },
+  "C": {
+    "n_total": 25,
+    "n_detected": 19,
+    "detection_rate": 0.76,
+    "mean": 4.7368421052631575,
+    "std": 2.8837110593268895,
+    "median": 5.0
+  }
+}

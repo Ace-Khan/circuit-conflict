@@ -1,237 +1,344 @@
 """
-metrics.py — statistics, Jaccard similarity, and phase-transition analysis.
+metrics.py — head selection, paired statistics, and the Jaccard null models.
 
-All functions are pure (no model, no I/O side-effects) to keep them
-independently testable.
+The headline number in this project is the cross-category overlap of causally
+validated head sets.  Overlap between two k-subsets of 144 heads has a nonzero
+chance baseline, so an observed Jaccard reported against ZERO is uninterpretable.
+Two nulls are provided, because the project treats both high and low overlap as
+informative and a single null can only bound one side:
+
+  Null I  (chance floor)   uniform random k-subsets -> is the overlap above chance?
+  Null II (shared ceiling) item-label permutation   -> is it below what one shared
+                                                       mechanism would produce?
+
+Null II is what makes a LOW overlap positive evidence for task-specific
+arbitration, rather than a bare null result.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 
+HeadSet = Set[Tuple[int, int]]
+
+
 # ---------------------------------------------------------------------------
-# Phase-transition detection
+# Multiple comparisons
+# ---------------------------------------------------------------------------
+
+def bh_fdr(pvals: np.ndarray, q: float = 0.05) -> np.ndarray:
+    """Benjamini-Hochberg. Returns a boolean mask of rejected nulls."""
+    p = np.asarray(pvals, dtype=float)
+    ok = ~np.isnan(p)
+    out = np.zeros(p.shape, dtype=bool)
+    idx = np.where(ok)[0]
+    if idx.size == 0:
+        return out
+    order = idx[np.argsort(p[idx])]
+    n = order.size
+    thresh = q * (np.arange(1, n + 1) / n)
+    passed = p[order] <= thresh
+    if passed.any():
+        cut = np.max(np.where(passed)[0])
+        out[order[: cut + 1]] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Paired per-head statistics
+# ---------------------------------------------------------------------------
+
+def paired_head_stats(effects: np.ndarray) -> pd.DataFrame:
+    """
+    Per-head statistics over items.
+
+    The head column is named `head_idx`, not `head`: `head` shadows
+    DataFrame.head/Series.head, so `df.head == 3` silently returns False rather
+    than raising, which is a silent-wrong-answer bug rather than a loud one.
+
+    effects : (n_items, n_layers, n_heads) normalised patching effects.
+
+    A Wilcoxon signed-rank test against zero is used rather than the previous
+    unpaired Welch's t-test: the design produces token-aligned pairs, and an
+    unpaired test discards exactly the pairing the design exists to create.
+    """
+    n_items, n_layers, n_heads = effects.shape
+    rows = []
+    for L in range(n_layers):
+        for h in range(n_heads):
+            v = effects[:, L, h]
+            v = v[~np.isnan(v)]
+            if v.size < 3 or np.allclose(v, 0):
+                stat, p = np.nan, np.nan
+            else:
+                try:
+                    stat, p = stats.wilcoxon(v)
+                except ValueError:
+                    stat, p = np.nan, np.nan
+            rows.append({
+                "layer": L, "head_idx": h,
+                "mean_effect": float(np.mean(v)) if v.size else np.nan,
+                "median_effect": float(np.median(v)) if v.size else np.nan,
+                "se": float(np.std(v, ddof=1) / np.sqrt(v.size)) if v.size > 1 else np.nan,
+                "n": int(v.size),
+                "p_value": float(p) if p == p else np.nan,
+            })
+    df = pd.DataFrame(rows)
+    df["fdr_significant"] = bh_fdr(df.p_value.values, q=0.05)
+    return df
+
+
+def select_head_set(
+    stats_df: pd.DataFrame,
+    effect_floor: float = 0.05,
+    use_fdr: bool = True,
+) -> HeadSet:
+    """Causally validated head set: FDR-significant AND above an effect floor."""
+    m = np.abs(stats_df.median_effect) >= effect_floor
+    if use_fdr:
+        m &= stats_df.fdr_significant
+    return {(int(r.layer), int(r["head_idx"])) for _, r in stats_df[m].iterrows()}
+
+
+def top_k_head_set(stats_df: pd.DataFrame, k: int = 10) -> HeadSet:
+    """Fixed-k head set by |median effect| — for comparability with prior work."""
+    d = stats_df.reindex(stats_df.median_effect.abs().sort_values(ascending=False).index)
+    return {(int(r.layer), int(r["head_idx"])) for _, r in d.head(k).iterrows()}
+
+
+# ---------------------------------------------------------------------------
+# Overlap measures
+# ---------------------------------------------------------------------------
+
+def jaccard(a: HeadSet, b: HeadSet) -> float:
+    if not a and not b:
+        return np.nan
+    return len(a & b) / len(a | b)
+
+
+def overlap_coefficient(a: HeadSet, b: HeadSet) -> float:
+    """|A n B| / min(|A|,|B|) — robust when the two sets differ in size."""
+    if not a or not b:
+        return np.nan
+    return len(a & b) / min(len(a), len(b))
+
+
+# ---------------------------------------------------------------------------
+# Null I — uniform random k-subsets (exact)
+# ---------------------------------------------------------------------------
+
+def jaccard_null_uniform(k_a: int, k_b: int, n_heads: int = 144) -> Dict[str, float]:
+    """
+    Exact chance distribution of overlap between independent uniform subsets.
+
+    |A n B| is hypergeometric, so no sampling is needed.  Returns the expected
+    Jaccard and the smallest intersection size that clears p < 0.05.
+    """
+    if k_a == 0 or k_b == 0:
+        return {"expected_intersection": np.nan, "expected_jaccard": np.nan,
+                "min_intersection_p05": np.nan, "min_jaccard_p05": np.nan}
+    rv = stats.hypergeom(n_heads, k_a, k_b)
+    ms = np.arange(0, min(k_a, k_b) + 1)
+    pmf = rv.pmf(ms)
+    exp_m = float((ms * pmf).sum())
+    surv = 1.0 - np.cumsum(pmf) + pmf          # P(M >= m)
+    sig = ms[surv < 0.05]
+    m05 = int(sig[0]) if sig.size else np.nan
+    return {
+        "expected_intersection": exp_m,
+        "expected_jaccard": exp_m / (k_a + k_b - exp_m),
+        "min_intersection_p05": m05,
+        "min_jaccard_p05": (m05 / (k_a + k_b - m05)) if m05 == m05 else np.nan,
+    }
+
+
+def jaccard_p_upper(k_a: int, k_b: int, observed_intersection: int, n_heads: int = 144) -> float:
+    """P(intersection >= observed) under Null I."""
+    if k_a == 0 or k_b == 0:
+        return np.nan
+    return float(stats.hypergeom(n_heads, k_a, k_b).sf(observed_intersection - 1))
+
+
+# ---------------------------------------------------------------------------
+# Null II — item-label permutation (the "one shared mechanism" ceiling)
+# ---------------------------------------------------------------------------
+
+def jaccard_null_label_permutation(
+    effects_by_cat: Dict[str, np.ndarray],
+    cat_a: str,
+    cat_b: str,
+    selector,
+    n_perm: int = 2000,
+    seed: int = 0,
+) -> np.ndarray:
+    """
+    Distribution of Jaccard if both categories were draws from ONE mechanism.
+
+    Pools items from the two categories and repeatedly re-splits them at the
+    original sizes, re-selecting head sets each time.  Permuted pseudo-categories
+    estimate the same mean, so this is the HIGH-overlap reference; an observed
+    Jaccard significantly BELOW it is evidence for task-specific arbitration.
+
+    Requires the two categories' effect arrays to share (n_layers, n_heads).
+    """
+    rng = np.random.default_rng(seed)
+    ea, eb = effects_by_cat[cat_a], effects_by_cat[cat_b]
+    pooled = np.concatenate([ea, eb], axis=0)
+    n_a = ea.shape[0]
+    n_total = pooled.shape[0]
+
+    out = np.empty(n_perm, dtype=float)
+    for i in range(n_perm):
+        perm = rng.permutation(n_total)
+        sa = selector(pooled[perm[:n_a]])
+        sb = selector(pooled[perm[n_a:]])
+        out[i] = jaccard(sa, sb)
+    return out
+
+
+def jaccard_bootstrap_ci(
+    effects_by_cat: Dict[str, np.ndarray],
+    cat_a: str,
+    cat_b: str,
+    selector,
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> Tuple[float, float, np.ndarray]:
+    """
+    Percentile bootstrap CI for the observed Jaccard.
+
+    Necessary because top-k / FDR selection is a hard threshold and therefore
+    unstable at n ~ 20 items per category.
+    """
+    rng = np.random.default_rng(seed)
+    ea, eb = effects_by_cat[cat_a], effects_by_cat[cat_b]
+    vals = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
+        ia = rng.integers(0, ea.shape[0], ea.shape[0])
+        ib = rng.integers(0, eb.shape[0], eb.shape[0])
+        vals[i] = jaccard(selector(ea[ia]), selector(eb[ib]))
+    lo, hi = np.nanpercentile(vals, [2.5, 97.5])
+    return float(lo), float(hi), vals
+
+
+# ---------------------------------------------------------------------------
+# Threshold-free backstop
+# ---------------------------------------------------------------------------
+
+def rank_correlation_across_categories(scores_by_cat: Dict[str, np.ndarray]) -> pd.DataFrame:
+    """
+    Spearman rho between full 144-head effect vectors for every category pair.
+
+    A conclusion that only holds at one choice of k is not a conclusion, so this
+    threshold-free view is reported alongside the Jaccard.
+    """
+    cats = sorted(scores_by_cat)
+    rows = []
+    for i, a in enumerate(cats):
+        for b in cats[i + 1:]:
+            va, vb = scores_by_cat[a].ravel(), scores_by_cat[b].ravel()
+            ok = ~(np.isnan(va) | np.isnan(vb))
+            rho, p = stats.spearmanr(va[ok], vb[ok])
+            rows.append({"cat_a": a, "cat_b": b, "spearman_rho": rho, "p_value": p})
+    return pd.DataFrame(rows)
+
+
+def overlap_vs_k(stats_by_cat: Dict[str, pd.DataFrame], ks: Sequence[int] = (5, 10, 20, 30)) -> pd.DataFrame:
+    """Jaccard at several k, so the result is not an artefact of one threshold."""
+    cats = sorted(stats_by_cat)
+    rows = []
+    for k in ks:
+        sets = {c: top_k_head_set(stats_by_cat[c], k) for c in cats}
+        for i, a in enumerate(cats):
+            for b in cats[i + 1:]:
+                inter = len(sets[a] & sets[b])
+                rows.append({
+                    "k": k, "cat_a": a, "cat_b": b,
+                    "intersection": inter,
+                    "jaccard": jaccard(sets[a], sets[b]),
+                    "expected_jaccard": jaccard_null_uniform(k, k)["expected_jaccard"],
+                    "p_upper": jaccard_p_upper(k, k, inter),
+                })
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Phase transition (logit-lens curves)
 # ---------------------------------------------------------------------------
 
 def detect_phase_transition(layer_diffs: np.ndarray) -> Optional[int]:
     """
-    Find the first layer where the logit-diff curve crosses zero, or — if
-    no crossing — the layer with the largest magnitude change.
+    First layer at which the logit-difference curve crosses zero, else None.
 
-    Returns None only when the curve is entirely flat.
+    The previous version fell back to argmax(|diff|) whenever there was no sign
+    change, so a transition was reported for ANY non-flat curve and the reported
+    detection rate was structurally 100%.  A curve that never crosses zero has no
+    phase transition, and saying so is the informative answer.
     """
-    for i in range(len(layer_diffs) - 1):
-        if layer_diffs[i] * layer_diffs[i + 1] < 0:
+    d = np.asarray(layer_diffs, dtype=float)
+    for i in range(len(d) - 1):
+        if d[i] * d[i + 1] < 0:
             return i + 1
-    deltas = np.abs(np.diff(layer_diffs))
-    if deltas.max() > 0:
-        return int(np.argmax(deltas)) + 1
     return None
 
 
-def phase_transition_stats(
-    transitions: List[Optional[int]],
-    n_layers: int = 12,
-) -> Dict[str, float]:
-    """
-    Summarise a collection of phase-transition layer indices.
-
-    Parameters
-    ----------
-    transitions : list of int or None (None = no transition detected)
-    n_layers    : total number of model layers (for normalisation)
-
-    Returns
-    -------
-    dict with keys: mean, std, median, min, max, n_detected, n_total,
-                    detection_rate, normalised_mean
-    """
-    valid = [t for t in transitions if t is not None]
-    n = len(valid)
-    total = len(transitions)
-    if n == 0:
-        return {
-            "mean": float("nan"), "std": float("nan"),
-            "median": float("nan"), "min": float("nan"), "max": float("nan"),
-            "n_detected": 0, "n_total": total,
-            "detection_rate": 0.0, "normalised_mean": float("nan"),
-        }
-    arr = np.array(valid, dtype=float)
+def phase_transition_stats(transitions: Sequence[Optional[float]]) -> Dict[str, float]:
+    """NaN-safe summary (values round-trip through CSV, where None becomes NaN)."""
+    vals = [float(t) for t in transitions
+            if t is not None and not (isinstance(t, float) and np.isnan(t))]
+    n_total = len(transitions)
+    if not vals:
+        return {"n_total": n_total, "n_detected": 0, "detection_rate": 0.0,
+                "mean": np.nan, "std": np.nan, "median": np.nan}
+    a = np.array(vals, dtype=float)
     return {
-        "mean": float(arr.mean()),
-        "std": float(arr.std()),
-        "median": float(np.median(arr)),
-        "min": float(arr.min()),
-        "max": float(arr.max()),
-        "n_detected": n,
-        "n_total": total,
-        "detection_rate": n / total,
-        "normalised_mean": float(arr.mean() / n_layers),
+        "n_total": n_total,
+        "n_detected": int(a.size),
+        "detection_rate": float(a.size / n_total) if n_total else 0.0,
+        "mean": float(a.mean()),
+        "std": float(a.std(ddof=1)) if a.size > 1 else 0.0,
+        "median": float(np.median(a)),
     }
 
 
 # ---------------------------------------------------------------------------
-# Arbitration head delta score
+# Paper table
 # ---------------------------------------------------------------------------
 
-def arbitration_delta_score(
-    conflict_magnitudes: np.ndarray,
-    unambiguous_magnitudes: np.ndarray,
-) -> np.ndarray:
-    """
-    Compute mean activation delta per head: conflict - unambiguous.
-
-    Parameters
-    ----------
-    conflict_magnitudes    : (n_prompts_conflict, n_layers, n_heads)
-    unambiguous_magnitudes : (n_prompts_unamb, n_layers, n_heads)
-
-    Returns
-    -------
-    (n_layers, n_heads) delta array — positive = more active during conflict
-    """
-    return conflict_magnitudes.mean(axis=0) - unambiguous_magnitudes.mean(axis=0)
-
-
-def rank_heads_by_delta(delta: np.ndarray) -> List[Tuple[int, int, float]]:
-    """
-    Return a sorted list of (layer, head, delta_score) from highest to lowest.
-    """
-    n_layers, n_heads = delta.shape
-    flat = [(layer, head, float(delta[layer, head]))
-            for layer in range(n_layers)
-            for head in range(n_heads)]
-    flat.sort(key=lambda x: x[2], reverse=True)
-    return flat
-
-
-def ranked_heads_to_df(ranked: List[Tuple[int, int, float]]) -> pd.DataFrame:
-    return pd.DataFrame(ranked, columns=["layer", "head", "delta_score"])
-
-
-# ---------------------------------------------------------------------------
-# Cross-category Jaccard similarity
-# ---------------------------------------------------------------------------
-
-def top_k_heads(delta: np.ndarray, k: int = 10) -> Set[Tuple[int, int]]:
-    """Return the top-k (layer, head) tuples by delta score."""
-    ranked = rank_heads_by_delta(delta)
-    return {(r[0], r[1]) for r in ranked[:k]}
-
-
-def jaccard(set_a: Set, set_b: Set) -> float:
-    if not set_a and not set_b:
-        return 1.0
-    return len(set_a & set_b) / len(set_a | set_b)
-
-
-def cross_category_jaccard(
-    deltas: Dict[str, np.ndarray],
-    k: int = 10,
+def compile_cross_category_table(
+    head_sets: Dict[str, HeadSet],
+    effects_by_cat: Dict[str, np.ndarray],
+    selector,
+    n_perm: int = 2000,
+    n_boot: int = 1000,
+    seed: int = 0,
 ) -> pd.DataFrame:
-    """
-    Compute pairwise Jaccard similarity between top-k head sets across
-    categories.
-
-    Parameters
-    ----------
-    deltas : dict of {category_label: delta_array (n_layers, n_heads)}
-    k      : number of top heads to compare
-
-    Returns
-    -------
-    pd.DataFrame (n_categories × n_categories) of Jaccard scores
-    """
-    cats = list(deltas.keys())
-    top = {c: top_k_heads(deltas[c], k) for c in cats}
-    data = {c_row: {c_col: jaccard(top[c_row], top[c_col]) for c_col in cats}
-            for c_row in cats}
-    return pd.DataFrame(data, index=cats, columns=cats)
-
-
-# ---------------------------------------------------------------------------
-# Ablation / patch success statistics
-# ---------------------------------------------------------------------------
-
-def summarise_flip_rates(
-    flip_data: List[Dict],  # list of dicts from patching.ablation_flip_rate
-) -> pd.DataFrame:
-    """
-    Aggregate ablation flip-rate results across a list of runs into a tidy
-    DataFrame suitable for plotting.
-    """
-    return pd.DataFrame(flip_data)
-
-
-def t_test_conflict_vs_unamb(
-    conflict_vals: np.ndarray,
-    unamb_vals: np.ndarray,
-) -> Dict[str, float]:
-    """
-    Welch's t-test: is the mean activation magnitude significantly higher
-    during conflict prompts than during unambiguous prompts?
-
-    Returns dict with t_stat, p_value, cohens_d.
-    """
-    t_stat, p_val = stats.ttest_ind(conflict_vals, unamb_vals, equal_var=False)
-    pooled_std = np.sqrt(
-        (conflict_vals.std(ddof=1) ** 2 + unamb_vals.std(ddof=1) ** 2) / 2
-    )
-    cohens_d = (conflict_vals.mean() - unamb_vals.mean()) / (pooled_std + 1e-12)
-    return {
-        "t_stat": float(t_stat),
-        "p_value": float(p_val),
-        "cohens_d": float(cohens_d),
-        "mean_conflict": float(conflict_vals.mean()),
-        "mean_unamb": float(unamb_vals.mean()),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Compile a full metric summary table
-# ---------------------------------------------------------------------------
-
-def compile_paper_metrics(
-    transition_stats_by_cat: Dict[str, Dict],
-    ranked_heads: List[Tuple[int, int, float]],
-    flip_results_by_head: Dict[Tuple[int, int], Dict],
-    jaccard_df: pd.DataFrame,
-    top_k: int = 5,
-) -> str:
-    """
-    Return a Markdown-formatted summary table of all paper metrics.
-    """
-    lines = ["# Paper Metrics Summary\n"]
-
-    lines.append("## 1. Conflict Resolution Layer (Phase 2)\n")
-    lines.append("| Category | Mean Layer | Std | Median | Detection Rate |")
-    lines.append("|---|---|---|---|---|")
-    for cat, st in transition_stats_by_cat.items():
-        lines.append(
-            f"| {cat} | {st['mean']:.2f} | {st['std']:.2f} | "
-            f"{st['median']:.1f} | {st['detection_rate']:.0%} |"
-        )
-
-    lines.append("\n## 2. Top Arbitration Head Candidates (Phase 3)\n")
-    lines.append("| Rank | Layer | Head | Delta Score |")
-    lines.append("|---|---|---|---|")
-    for rank, (layer, head, delta) in enumerate(ranked_heads[:10], 1):
-        lines.append(f"| {rank} | {layer} | {head} | {delta:.4f} |")
-
-    lines.append("\n## 3. Ablation Flip Rates — Top Candidates (Phase 3)\n")
-    lines.append("| Layer | Head | Flip Rate | N Prompts |")
-    lines.append("|---|---|---|---|")
-    for (layer, head), res in list(flip_results_by_head.items())[:top_k]:
-        lines.append(
-            f"| {layer} | {head} | {res['flip_rate']:.1%} | {res['n_prompts']} |"
-        )
-
-    lines.append("\n## 4. Cross-Category Jaccard Similarity (Top-10 Heads)\n")
-    lines.append(jaccard_df.to_markdown())
-
-    return "\n".join(lines)
+    """One row per category pair with observed overlap, both nulls, and a CI."""
+    cats = sorted(head_sets)
+    rows = []
+    for i, a in enumerate(cats):
+        for b in cats[i + 1:]:
+            sa, sb = head_sets[a], head_sets[b]
+            inter = len(sa & sb)
+            j = jaccard(sa, sb)
+            null1 = jaccard_null_uniform(len(sa), len(sb))
+            perm = jaccard_null_label_permutation(
+                effects_by_cat, a, b, selector, n_perm=n_perm, seed=seed)
+            lo, hi, _ = jaccard_bootstrap_ci(
+                effects_by_cat, a, b, selector, n_boot=n_boot, seed=seed)
+            rows.append({
+                "cat_a": a, "cat_b": b,
+                "n_a": len(sa), "n_b": len(sb), "intersection": inter,
+                "jaccard": j,
+                "ci_lo": lo, "ci_hi": hi,
+                "expected_jaccard_chance": null1["expected_jaccard"],
+                "p_upper_vs_chance": jaccard_p_upper(len(sa), len(sb), inter),
+                "perm_null_median": float(np.nanmedian(perm)),
+                "p_lower_vs_shared": float(np.nanmean(perm <= j)),
+            })
+    return pd.DataFrame(rows)
