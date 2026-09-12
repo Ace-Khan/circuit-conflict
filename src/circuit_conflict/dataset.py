@@ -57,7 +57,6 @@ import torch
 # silently wrote prompts.csv into the parent directory.)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_DIR = REPO_ROOT / "data" / "prompts"
-PROMPTS_CSV = PROMPTS_DIR / "prompts.csv"   # default (gpt2)
 
 
 def model_slug(model_name: str) -> str:
@@ -74,6 +73,12 @@ def prompts_path(model_name: str = "gpt2") -> Path:
     one tokeniser and one model's behaviour.  A second model needs its own build.
     """
     return PROMPTS_DIR / f"prompts_{model_slug(model_name)}.csv"
+
+
+# Default path. This is an alias for the gpt2 file rather than a separate
+# prompts.csv: two independent files let the notebook path and the pipeline path
+# drift apart silently, which is exactly what happened.
+PROMPTS_CSV = PROMPTS_DIR / "prompts_gpt2.csv"
 
 SCHEMA = [
     "item_id",              # pairing key, e.g. "B_007"

@@ -217,6 +217,15 @@ Two models: **GPT-2 Small** (12L × 12H = 144 heads) and **Pythia-410M** (24L ×
 different family, tokeniser and training data). The dataset is rebuilt per model — token ids,
 positions, the single-token filter and the gates are all tokeniser- and model-specific.
 
+Analysed: **86 items per model.** GPT-2 admits 88 of 89 generated, then the manipulation check
+drops 2 whose slot swap moves behaviour by under 1 logit (A 39 / B 22 / C 25). Pythia admits 86 of
+87 with none dropped (A 40 / B 24 / C 22). The headline is unchanged with or without those two
+items.
+
+The notebooks and `pipeline.py` are two entry points to the same analysis and produce
+byte-identical results; a divergence between them is treated as a correctness bug and there is a
+test for it.
+
 ```bash
 uv run python -m circuit_conflict.pipeline --model gpt2
 uv run python -m circuit_conflict.pipeline --model pythia-410m --rebuild
@@ -296,6 +305,13 @@ Recorded because the intermediate readings were wrong in ways worth knowing abou
    answer identity was confounded with position. It is now balanced across both sides.
 5. **Category B's template and counterbalance were perfectly correlated**, since both derived from
    the same counter. They are now crossed.
+6. **The notebook and pipeline paths ran different analyses.** The manipulation check lived in
+   `pipeline.main()`, so the notebooks — which call `run_patching` directly — skipped it and
+   overwrote the pipeline's filtered results with unfiltered ones. Notebook 04 also used 200
+   resamples against the pipeline's 10,000. The check now lives inside `run_patching`, the
+   resample counts match, and both are pinned by tests.
+7. **Two independent prompt files** (`prompts.csv` for the notebooks, `prompts_gpt2.csv` for the
+   pipeline) could drift apart silently. There is now one canonical file per model.
 
 ---
 

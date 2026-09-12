@@ -229,3 +229,46 @@ def test_logit_lens_includes_unembed_bias():
     from circuit_conflict import utils
     src = inspect.getsource(utils.logit_lens_diff)
     assert "b_U" in src, "logit_lens_diff must include the unembedding bias"
+
+
+def test_manipulation_check_lives_in_run_patching():
+    """
+    Regression: the check used to live in main(), so the notebook path (which
+    calls run_patching directly) skipped it and overwrote the pipeline's
+    filtered results with unfiltered ones. Two code paths, different science.
+    """
+    import inspect
+
+    from circuit_conflict import pipeline as PL
+    assert "MIN_SWING" in inspect.getsource(PL.run_patching)
+    assert "MIN_SWING" not in inspect.getsource(PL.main)
+
+
+def test_default_prompt_path_is_the_gpt2_file():
+    """
+    Regression: a separate prompts.csv let the notebook path and the pipeline
+    path drift apart silently.
+    """
+    from circuit_conflict import dataset as D
+    assert D.PROMPTS_CSV == D.prompts_path("gpt2")
+    assert D.PROMPTS_CSV.name == "prompts_gpt2.csv"
+
+
+def test_notebook_and_pipeline_use_the_same_resample_counts():
+    """
+    Regression: notebook 04 used n_perm=200 while the pipeline used 10,000, so
+    running the notebooks overwrote the pipeline's results with lower-resolution
+    p-values. Any divergence between the two paths is a correctness bug.
+    """
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    gen = (root / "scripts" / "make_notebooks.py").read_text()
+    pipe = (root / "src" / "circuit_conflict" / "pipeline.py").read_text()
+
+    def counts(text):
+        return set(re.findall(r"n_(?:perm|boot)=(\d+)", text))
+
+    assert counts(gen) == counts(pipe) == {"10000"}, (
+        f"resample counts differ: notebooks {counts(gen)} vs pipeline {counts(pipe)}"
+    )

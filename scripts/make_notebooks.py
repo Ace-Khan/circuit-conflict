@@ -246,16 +246,21 @@ print(f"  expected overlap by chance : {null['expected_jaccard']:.4f}")
 print(f"  need >= {null['min_intersection_p05']:.0f} shared heads "
       f"(J >= {null['min_jaccard_p05']:.3f}) to clear p < 0.05")"""),
 ("md", "## Observed overlap with both nulls, plus a bootstrap CI"),
-("code", """selector = lambda e: M.top_k_head_set(M.paired_head_stats(e), k=10)
+("code", """# fast_top_k_selector is exactly equivalent to top_k_head_set (both rank on
+# |median effect|) but skips 144 Wilcoxon tests per resample, which is what makes
+# 10,000 permutations cheap. Same counts as the pipeline, so the two paths agree.
+selector = M.fast_top_k_selector(10)
 table = M.compile_cross_category_table(topk_sets, effects, selector,
-                                       n_perm=200, n_boot=200, seed=0)
+                                       n_perm=10000, n_boot=10000, seed=0,
+                                       n_heads=144)
+table.insert(0, "selection", "top10")   # same shape the pipeline writes
 table.to_csv(PL.RESULTS / "phase4" / "cross_category_topk.csv", index=False)
 table.round(4)"""),
 ("md", """## Robustness
 
 A conclusion that only holds at one choice of *k* is not a conclusion, and Spearman rho on the
 full 144-head vectors avoids thresholding entirely."""),
-("code", """ovk = M.overlap_vs_k(stats_by_cat)
+("code", """ovk = M.overlap_vs_k(stats_by_cat, n_heads=144)
 ovk.to_csv(PL.RESULTS / "phase4" / "overlap_vs_k.csv", index=False)
 print(ovk.pivot_table(index="k", columns=["cat_a", "cat_b"], values="jaccard").round(3))
 
