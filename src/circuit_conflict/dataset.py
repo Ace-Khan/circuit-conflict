@@ -87,6 +87,8 @@ SCHEMA = [
     "gold_control",                 # always "B" under the sign convention
     "p_end", "p_slot", "p_A", "p_B",  # token positions (BOS-prepended); -1 = absent
     "n_tokens",
+    "probe_A", "probe_B",   # precondition probes, built with the item
+
     "passes_precondition",
     "precondition_margin",
 ]
@@ -185,6 +187,8 @@ def build_minimal_pair(
     control_text: str,
     answer_A: str,
     answer_B: str,
+    probe_A: str = "",
+    probe_B: str = "",
     n_expected_diff: int = 1,
 ) -> list[dict]:
     """
@@ -247,6 +251,7 @@ def build_minimal_pair(
             "p_A": -1 if pa is None else pa,
             "p_B": -1 if pb is None else pb,
             "n_tokens": n_tokens,
+            "probe_A": probe_A, "probe_B": probe_B,
             "passes_precondition": False,
             "precondition_margin": float("nan"),
         })
@@ -266,10 +271,13 @@ def build_minimal_pair(
 # The control's gold answer is therefore model-independent, which is what makes
 # it a real control rather than a second reading of the model's own preference.
 
+PROBE_B1 = "Rule: say {w}. Obeying the rule, I say"
+PROBE_C1 = "Question: what is the capital of {entity}? Answer: the capital of {entity} is"
+PROBE_C2 = "Question: where is the {entity}? Answer: the {entity} is in"
+
 TEMPLATE_A = "When {n1} and {n2} went to the store, he bought a drink. The buyer was"
 
-# The probe uses a different scenario and verb from both experimental arms, so it
-# shares no surface structure with them.
+# Probe uses a different scenario and verb from both experimental arms.
 PROBE_A = "{n1} and {n2} were talking quietly. He said hello. The speaker was"
 
 
@@ -277,11 +285,17 @@ def build_category_a_df(model, n_items: int = 40, seed: int = 0) -> tuple[pd.Dat
     """
     Category A -- referential conflict between two candidate antecedents.
 
-    conflict: both candidates are male  -> "he" is genuinely ambiguous
-    control : the first name is female  -> gender agreement licenses exactly one
+    conflict: both candidates male  -> "he" is genuinely ambiguous
+    control : one is replaced by a female name -> gender agreement licenses one
 
-    The control's gold answer is fixed by grammatical agreement with the pronoun,
-    so it is model-independent.  The swapped slot is the first name.
+    Counterbalanced on which side the swapped slot sits, so that answer_A is the
+    first-mentioned name for half the items and the second-mentioned name for the
+    other half. Without this, answer identity is perfectly confounded with
+    position and any "arbitration" head could just be a recency head.
+
+    Each item carries two probes in which exactly ONE name is male, so the gate
+    tests gender agreement. A probe with both names male is ambiguous and
+    gates on the lexical prior instead -- which is the thing being controlled for.
     """
     import random
     rng = random.Random(seed)
@@ -291,34 +305,46 @@ def build_category_a_df(model, n_items: int = 40, seed: int = 0) -> tuple[pd.Dat
     rejects = ([{"item": w, "reason": "male name not single-token"} for w in rej_m] +
                [{"item": w, "reason": "female name not single-token"} for w in rej_f])
 
-    combos = [(m1, f1, m2) for m1, m2 in itertools.permutations(males, 2)
-              for f1 in females]
-    rng.shuffle(combos)
+    pairs = list(itertools.permutations(males, 2))
+    rng.shuffle(pairs)
 
     rows: list[dict] = []
     idx = 0
     seen = set()
-    for m1, f1, m2 in combos:
+    for m1, m2 in pairs:
         if len(rows) // 2 >= n_items:
             break
-        if (m1, m2) in seen:
+        key = frozenset((m1, m2))
+        if key in seen:
             continue
-        seen.add((m1, m2))
+        seen.add(key)
 
-        # slot = first name.  male -> m1 is an available referent (supports m1);
-        #                     female -> m1 is excluded (supports m2)
-        conflict = TEMPLATE_A.format(n1=m1, n2=m2)
-        control = TEMPLATE_A.format(n1=f1, n2=m2)
+        f1, f2 = rng.sample(females, 2)
+        conflict = TEMPLATE_A.format(n1=m1, n2=m2)          # both male, ambiguous
+        cb = "slot_on_first" if idx % 2 == 0 else "slot_on_second"
+
+        if cb == "slot_on_first":
+            # swap n1: male -> m1 available (supports m1); female -> only m2 left
+            control = TEMPLATE_A.format(n1=f1, n2=m2)
+            a_ans, b_ans = m1, m2
+        else:
+            # swap n2: male -> m2 available (supports m2); female -> only m1 left
+            control = TEMPLATE_A.format(n1=m1, n2=f2)
+            a_ans, b_ans = m2, m1
+
+        # probe_A: only answer_A's name is male -> it must win
+        # probe_B: only answer_B's name is male -> it must win (preference reverses)
+        probe_a = (PROBE_A.format(n1=a_ans, n2=f2) if a_ans == m1
+                   else PROBE_A.format(n1=f1, n2=a_ans))
+        probe_b = (PROBE_A.format(n1=b_ans, n2=f2) if b_ans == m1
+                   else PROBE_A.format(n1=f1, n2=b_ans))
 
         item_id = f"A_{idx:03d}"
         try:
             rows.extend(build_minimal_pair(
-                model, item_id, "A", "A1", "slot_on_first",
-                conflict, control, m1, m2,
+                model, item_id, "A", "A1", cb, conflict, control,
+                a_ans, b_ans, probe_a, probe_b,
             ))
-            # stash the female counterpart for the precondition probe
-            for r in rows[-2:]:
-                r["counterbalance"] = f"slot_on_first|{f1}"
             idx += 1
         except PairRejected as e:
             rejects.append({"item": item_id, "reason": str(e), "n1": m1, "n2": m2})
@@ -343,13 +369,25 @@ TEMPLATE_B2 = ("Question: name a color. Hint one: the answer is {w1}. "
 
 
 def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> tuple[pd.DataFrame, list[dict]]:
+    """
+    Category B -- instruction / directive conflict.
+
+    Template and counterbalance are CROSSED, not coupled. Deriving both from the
+    same counter made B1 always slot-on-second and B2 always slot-on-first, so
+    the two factors could not be separated.
+
+    Honest caveat for the write-up: on a model this small B1 is substantially an
+    induction/copy task rather than instruction following. That is why the gate
+    below is load-bearing and why B2, which pits the directive against a
+    world-knowledge prior, is the stronger variant.
+    """
     import random
     rng = random.Random(seed)
 
     words, rejected_w = filter_single_token(model, RULE_WORDS)
     rejects = [{"item": w, "reason": "rule word not single-token"} for w in rejected_w]
 
-    combos = [(a, b) for a, b in itertools.permutations(words, 2)]
+    combos = list(itertools.permutations(words, 2))
     rng.shuffle(combos)
 
     rows: list[dict] = []
@@ -357,17 +395,15 @@ def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> tuple[pd.Dat
     for w_first, w_other in combos:
         if len(rows) // 2 >= n_items:
             break
-        template_id = "B1" if idx % 2 == 0 else "B2"
+        template_id = "B1" if (idx // 2) % 2 == 0 else "B2"
         template = TEMPLATE_B1 if template_id == "B1" else TEMPLATE_B2
         cb = "slot_on_second" if idx % 2 == 0 else "slot_on_first"
 
         if cb == "slot_on_second":
-            # slot = w2.  conflict: rules disagree; control: rules agree on w_first
             conflict = template.format(w1=w_first, w2=w_other)
             control = template.format(w1=w_first, w2=w_first)
             a_ans, b_ans = w_other, w_first
         else:
-            # slot = w1.  conflict: rules disagree; control: both say w_other
             conflict = template.format(w1=w_first, w2=w_other)
             control = template.format(w1=w_other, w2=w_other)
             a_ans, b_ans = w_first, w_other
@@ -375,7 +411,9 @@ def build_category_b_df(model, n_items: int = 24, seed: int = 1) -> tuple[pd.Dat
         item_id = f"B_{idx:03d}"
         try:
             rows.extend(build_minimal_pair(
-                model, item_id, "B", template_id, cb, conflict, control, a_ans, b_ans,
+                model, item_id, "B", template_id, cb, conflict, control,
+                a_ans, b_ans,
+                PROBE_B1.format(w=a_ans), PROBE_B1.format(w=b_ans),
             ))
             idx += 1
         except PairRejected as e:
@@ -441,9 +479,10 @@ def build_category_c_df(model, n_items: int = 30, seed: int = 2) -> tuple[pd.Dat
 
             item_id = f"C_{idx:03d}"
             try:
+                probe = (PROBE_C1 if template_id == "C1" else PROBE_C2).format(entity=entity)
                 rows.extend(build_minimal_pair(
                     model, item_id, "C", template_id, "slot_on_context",
-                    conflict, control, false_city, true_city,
+                    conflict, control, false_city, true_city, probe, probe,
                 ))
                 idx += 1
             except PairRejected as e:
@@ -468,10 +507,6 @@ def build_category_c_df(model, n_items: int = 30, seed: int = 2) -> tuple[pd.Dat
 # The reversal requirement is what rules out "answer_A is simply the more
 # frequent word", which is the failure mode Category B is most exposed to.
 
-PROBE_B1 = "Rule: say {w}. Obeying the rule, I say"
-PROBE_C1 = "Question: what is the capital of {entity}? Answer: the capital of {entity} is"
-PROBE_C2 = "Question: where is the {entity}? Answer: the {entity} is in"
-
 MIN_MARGIN = 0.6931471805599453  # ln 2 — the licensed answer at least 2x as likely
 
 
@@ -486,8 +521,16 @@ def run_preconditions(model, df: pd.DataFrame, verbose: bool = True) -> pd.DataF
     """
     Fill `passes_precondition` / `precondition_margin` per item.
 
-    Criterion (all categories): the preference must REVERSE between the two
-    probe prompts, and the mean |margin| must exceed ln 2.
+    Reads the probes stored on the item rather than reconstructing them by
+    parsing the prompt text, which was fragile and category-specific.
+
+    A and B: the preference must REVERSE between the two probes -- probe_A must
+    favour answer_A and probe_B must favour answer_B. Reversal is what rules out
+    "answer_A is simply the more frequent token".
+
+    C: a knowledge check, not a reversal. The conflict only exists if the model
+    holds the competing parametric belief, so both probes are the same
+    context-free question and it must favour the true answer.
     """
     df = df.copy()
     results: dict[str, tuple[bool, float]] = {}
@@ -496,54 +539,27 @@ def run_preconditions(model, df: pd.DataFrame, verbose: bool = True) -> pd.DataF
         conf = grp[grp.arm == "conflict"].iloc[0]
         cat = conf["category"]
         tok_A, tok_B = int(conf["token_A"]), int(conf["token_B"])
-        a, b = conf["answer_A"], conf["answer_B"]
 
         try:
-            if cat == "B":
-                # probe each rule in isolation; preference must follow the rule
-                d_a = _ld_on(model, PROBE_B1.format(w=a), tok_A, tok_B)
-                d_b = _ld_on(model, PROBE_B1.format(w=b), tok_A, tok_B)
-            elif cat == "C":
-                # context-free knowledge probe: does the model hold the belief at all?
-                # (only one direction is meaningful here, so the "reversal" is
-                #  against the context-free prior itself)
-                probe = PROBE_C1 if conf["template_id"] == "C1" else PROBE_C2
-                entity = _entity_from_prompt(conf["prompt_text"], conf["template_id"])
-                d_b = _ld_on(model, probe.format(entity=entity), tok_B, tok_A)
-                d_a = -d_b
-            else:  # A — gender-agreement reversal on a probe distinct from both arms
-                m1, m2 = a, b
-                f1 = str(conf["counterbalance"]).split("|")[-1]
-                # both male -> "He" is ambiguous but should not disfavour m1
-                d_a = _ld_on(model, PROBE_A.format(n1=m1, n2=m2), tok_A, tok_B)
-                # first name female -> "He" must resolve to m2
-                d_b = _ld_on(model, PROBE_A.format(n1=f1, n2=m2), tok_A, tok_B)
-        except Exception as e:  # noqa: BLE001 — record, never silently skip
+            if cat == "C":
+                d_b = _ld_on(model, str(conf["probe_B"]), tok_B, tok_A)
+                ok, margin = d_b > 0, abs(d_b)
+            else:
+                d_a = _ld_on(model, str(conf["probe_A"]), tok_A, tok_B)
+                d_b = _ld_on(model, str(conf["probe_B"]), tok_A, tok_B)
+                ok = (d_a > 0) and (d_b < 0)
+                margin = (abs(d_a) + abs(d_b)) / 2.0
+        except Exception as e:  # noqa: BLE001 -- record, never silently skip
             results[item_id] = (False, float("nan"))
             if verbose:
                 print(f"  {item_id}: precondition error: {e}")
             continue
 
-        if cat in ("A", "B"):
-            # true reversal: preference must flip when the disambiguator flips
-            reversed_ok = (d_a > 0) and (d_b < 0)
-        else:
-            # C is a knowledge check, not a reversal: the conflict only EXISTS if
-            # the model holds the competing parametric belief in the first place.
-            reversed_ok = (d_b > 0)
-        margin = (abs(d_a) + abs(d_b)) / 2.0
-        results[item_id] = (bool(reversed_ok and margin >= MIN_MARGIN), float(margin))
+        results[item_id] = (bool(ok and margin >= MIN_MARGIN), float(margin))
 
     df["passes_precondition"] = df.item_id.map(lambda i: results.get(i, (False, float("nan")))[0])
     df["precondition_margin"] = df.item_id.map(lambda i: results.get(i, (False, float("nan")))[1])
     return df
-
-
-def _entity_from_prompt(text: str, template_id: str) -> str:
-    """Recover the entity string from a built Category C prompt."""
-    if template_id == "C1":
-        return text.split("the capital of ")[1].split(" is ")[0]
-    return text.split("Fact: the ")[1].split(" is in ")[0]
 
 
 def precondition_report(df: pd.DataFrame) -> pd.DataFrame:

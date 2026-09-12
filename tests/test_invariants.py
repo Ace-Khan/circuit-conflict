@@ -11,6 +11,7 @@ Run: uv run pytest -q          (fast only)
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from circuit_conflict import metrics as M
@@ -175,3 +176,56 @@ def test_misaligned_pair_is_rejected(model):
         build_minimal_pair(model, "X_000", "A", "T", "cb",
                            "the cat sat on the mat today",
                            "the cat sat", "cat", "dog")
+
+
+@pytest.mark.slow
+def test_category_a_is_counterbalanced(model):
+    """
+    answer_A must be the first-mentioned name for half the items and the
+    second-mentioned for the other half. Without this, answer identity is
+    confounded with position and a recency head looks like an arbitration head.
+    """
+    from circuit_conflict import dataset as D
+    df, _ = D.build_category_a_df(model, n_items=20)
+    conf = df[df.arm == "conflict"]
+    counts = conf.counterbalance.value_counts()
+    assert set(counts.index) == {"slot_on_first", "slot_on_second"}
+    assert abs(counts["slot_on_first"] - counts["slot_on_second"]) <= 1
+
+
+@pytest.mark.slow
+def test_category_b_crosses_template_with_counterbalance(model):
+    """Deriving both from one counter made B1 always slot-on-second."""
+    from circuit_conflict import dataset as D
+    df, _ = D.build_category_b_df(model, n_items=24)
+    conf = df[df.arm == "conflict"]
+    ct = pd.crosstab(conf.template_id, conf.counterbalance)
+    assert (ct.values > 0).all(), f"template and counterbalance not crossed:\n{ct}"
+
+
+@pytest.mark.slow
+def test_category_a_probes_are_unambiguous(model):
+    """
+    Each Category A probe must contain exactly ONE male name. A probe with both
+    names male is ambiguous, so gating on it selects for the lexical prior --
+    precisely what the gate exists to control for.
+    """
+    from circuit_conflict import dataset as D
+    df, _ = D.build_category_a_df(model, n_items=12)
+    males = set(D.MALE_NAMES)
+    for _, r in df[df.arm == "conflict"].iterrows():
+        for probe in (r.probe_A, r.probe_B):
+            names = [w.strip(".,") for w in probe.split() if w.strip(".,") in males]
+            assert len(names) == 1, f"probe has {len(names)} male names: {probe}"
+
+
+def test_logit_lens_includes_unembed_bias():
+    """
+    Regression: the lens dropped b_U, shifting the whole curve by a constant and
+    moving the zero crossing that detect_phase_transition keys on.
+    """
+    import inspect
+
+    from circuit_conflict import utils
+    src = inspect.getsource(utils.logit_lens_diff)
+    assert "b_U" in src, "logit_lens_diff must include the unembedding bias"

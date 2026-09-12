@@ -30,9 +30,9 @@ mechanism, largely independent of what is in conflict.
 **Alternative (H0 — task-specific arbitration).** Each family recruits its own
 heads; "arbitration" is a description of a behaviour, not of a shared circuit.
 
-**Outcome:** the evidence favours H0. Overlap is significantly below a shared-mechanism
-ceiling in both models tested, and the small shared component found in GPT-2 Small does
-not survive the move to Pythia-410M. See **Results**.
+**Outcome:** neither, cleanly. Overlap is significantly above chance *and* significantly
+below a shared-mechanism ceiling, in both models tested — a small shared core plus
+substantial per-family machinery. See **Results**.
 
 The primary outcome measure is **cross-category Jaccard overlap of causally
 validated head sets**, with per-category ablation effect sizes as support.
@@ -113,13 +113,9 @@ what actually happened (see **Results**):
   conflict domain should not be generalised — a result rather than a null, because it would be a
   controlled confirmation of the transfer failures reported piecemeal in replication work.
 
-On GPT-2 Small alone the outcome looked like neither — above chance *and* below a shared
-mechanism, i.e. partial sharing, which was not one of the two hypotheses. Adding Pythia-410M
-resolved it toward **H0**: the above-chance half did not replicate and the shared core vanished,
-while the below-ceiling half held in both models.
-
-Recording this sequence deliberately. The single-model reading was the more interesting one, and
-it was wrong.
+The observed outcome is neither: overlap is above chance *and* below a shared mechanism, in both
+models. Partial sharing was not one of the two hypotheses, which is worth stating plainly rather
+than retrofitting it to whichever was closer.
 
 ---
 
@@ -153,10 +149,11 @@ These are design constraints to address before writing up, not afterthoughts.
 7. **Single seed per model.** Two model families are covered, but one checkpoint each.
    Recent work finds mid-layer heads are unstable across training runs of the same
    architecture, so head-level claims describe these checkpoints.
-8. **Category A is underpowered on Pythia** (13 items). See the confound note in Results;
-   the A–B null should not be leaned on.
-9. **Two models is not many.** The divergence between them is itself a finding, but with
-   n=2 it cannot be attributed to scale, family, tokeniser, or training data separately.
+8. **Two models is not many.** Overlap is consistently lower in Pythia-410M, but with n=2
+   that cannot be attributed to scale, family, or tokenisation separately.
+9. **Category B remains the weakest arm.** It passes its gate on both models, but on models
+   this small the B1 template is substantially an induction/copy task; B2, which pits the
+   directive against a world-knowledge prior, is the stronger variant.
 
 ---
 
@@ -216,10 +213,9 @@ circuit-conflict/
 
 ## Results
 
-Two models: **GPT-2 Small** (12L × 12H = 144 heads) and **Pythia-410M** (24L × 16H = 384 heads,
-different family, different tokeniser, different training data). The dataset is rebuilt per model —
-token ids, positions, the single-token vocabulary filter and the precondition gates are all
-tokeniser- and model-specific, so a dataset is never reused across models.
+Two models: **GPT-2 Small** (12L × 12H = 144 heads) and **Pythia-410M** (24L × 16H = 384 heads;
+different family, tokeniser and training data). The dataset is rebuilt per model — token ids,
+positions, the single-token filter and the gates are all tokeniser- and model-specific.
 
 ```bash
 uv run python -m circuit_conflict.pipeline --model gpt2
@@ -229,45 +225,44 @@ uv run python -m circuit_conflict.figures
 
 ### Pipeline validation
 
-On GPT-2 Small, Category C recovers **5 of Ortu et al. (2024)'s 6 published heads** in its top 10,
-occupying the top four slots by effect size — L10H0, L10H7, L10H10, L11H10, plus L9H9 — with signs
-matching their account (L10H0/L10H10/L9H9 promote the in-context answer; L10H7/L11H10 support the
-memorised one). The apparatus reproduces a published result it was not tuned to.
+On GPT-2 Small, Category C recovers **5 of Ortu et al. (2024)'s 6 published heads** in its top 10
+— L9H9, L10H0, L10H7, L10H10, L11H10 — with signs matching their account (L10H0/L10H10/L9H9
+promote the in-context answer; L10H7/L11H10 support the memorised one). The apparatus reproduces a
+published result it was not tuned to.
 
-### The headline, and how the second model changed it
+### Headline
 
-| Pair | GPT-2 J | vs chance | Pythia J | vs chance | vs one-mechanism (both) |
+| Pair | GPT-2 J | vs chance | Pythia J | vs chance | vs one-mechanism |
 |---|---|---|---|---|---|
-| A–B | 0.176 (3/10) | p = 0.023 | 0.053 (1/10) | **p = 0.23, n.s.** | p < 0.0001 |
-| A–C | 0.333 (5/10) | p = 0.0001 | 0.111 (2/10) | p = 0.025 | p ≤ 0.001 |
-| B–C | 0.250 (4/10) | p = 0.002 | 0.176 (3/10) | p = 0.001 | p ≤ 0.0008 |
+| A–B | 0.250 (4/10) | p = 0.002 | 0.111 (2/10) | p = 0.025 | p ≤ 0.0001 |
+| A–C | 0.333 (5/10) | p = 0.0001 | 0.176 (3/10) | p = 0.001 | p ≤ 0.0001 |
+| B–C | 0.250 (4/10) | p = 0.002 | 0.250 (4/10) | p = 0.00005 | p ≤ 0.036 |
 
 Nulls: 10,000 permutations, 10,000 bootstrap resamples. Chance J = 0.036 (GPT-2) / 0.013 (Pythia).
 
-**What replicates:** overlap is significantly *below* the one-shared-mechanism ceiling in every
-pair in both models, all p ≤ 0.001. Conflict arbitration is **not** one domain-general mechanism.
+**Every pair, in both models, is significantly above the chance floor and significantly below the
+one-shared-mechanism ceiling.** Conflict arbitration is neither a single domain-general mechanism
+nor fully task-specific: there is a small shared core plus substantial per-family machinery.
 
-**What does not replicate:** the above-chance half. Every Pythia overlap is lower, A–B is not
-above chance at all, and the **shared core disappears entirely** — GPT-2's two heads present in
-all three categories (L10H0, L11H10) have no Pythia counterpart. Rank correlations on the full
-head vectors drop from 0.39–0.55 to 0.21–0.37.
+Overlap is consistently lower in Pythia-410M, and its shared core is smaller. Whether that reflects
+scale, family, or tokenisation cannot be separated with two models.
 
-**Therefore the defensible claim is the conservative one:** arbitration in these models is largely
-**task-specific**. A small shared component exists in GPT-2 Small; it does not survive the move to
-a different model family. A single-model study here would have overclaimed, which is the point of
-having run the second one.
+### The shared core
 
-### The confound to state plainly
+Heads appearing in all three categories' top-10 sets:
 
-Pythia admitted only **13** Category A items (32.5%) against GPT-2's 25, so the A-pairs are
-underpowered and low power is a live alternative explanation for the A–B null. The clean
-comparison is **B–C**, where both models have comparable n (24/22 vs 23/25) — and there the
-overlap still drops, 0.250 → 0.176. The direction survives the confound; the A–B null should not
-be leaned on.
+- **GPT-2 Small** — L10H0, L10H7, L11H10. All three are Ortu et al. heads, found here
+  independently on coreference and instruction conflict, so they are not specific to factual
+  override.
+- **Pythia-410M** — L16H0 only.
+
+Threshold-free corroboration: Spearman ρ on the full head vectors is 0.38–0.57 (GPT-2) and
+0.23–0.48 (Pythia), all p < 1e-4. Overlap is stable across k = 5…30, so the result is not an
+artefact of k = 10.
 
 ### An asymmetry worth more attention than the headline
 
-On GPT-2 Small, mean-ablation effects are an order of magnitude larger in Category C (±1.8 logits)
+Mean-ablation effects on GPT-2 Small are an order of magnitude larger in Category C (±1.8 logits)
 than in A (±0.27) or B (±0.14). Conflict resolution is far more localised for factual override
 than for coreference or instruction conflict. Nearly all prior work sits in factual override —
 this is a direct caution against generalising from it, and arguably the most useful finding here.
@@ -276,12 +271,31 @@ this is a direct caution against generalising from it, and arguably the most use
 
 The first Category A design followed the Winograd template (*"The nurse is a man. The driver is a
 woman…"*). Swapping the stated gender moved GPT-2 Small's pronoun preference by **~0.1 logits** —
-0 of 32 items passed the reversal gate. The model runs on a fixed lexical prior over occupation
-pairs and effectively ignores the gender statement. Swapping a **name's** gender moves it ~2.5
-logits. Category A was rebuilt on names (62.5% admission on GPT-2, 32.5% on Pythia).
+0 of 32 items passed the gate. The model runs on a fixed lexical prior over occupation pairs and
+effectively ignores the gender statement. Swapping a **name's** gender moves it ~2.5 logits, so
+Category A was rebuilt on names.
 
 This is why WSC273 is not used for patching: at this scale such items measure lexical priors, not
 coreference.
+
+### Corrections made during analysis
+
+Recorded because the intermediate readings were wrong in ways worth knowing about:
+
+1. **The Category A gate was mis-specified.** One of its two probes had both names male — an
+   ambiguous item with no correct answer — so the gate required the model to prefer a particular
+   name under ambiguity. That selected on exactly the lexical prior the gate was meant to control
+   for, and rejected ~40% of Category A on GPT-2 and ~68% on Pythia. With both probes carrying
+   exactly one male name, admission is 100% in both models, and the earlier "Pythia Category A is
+   underpowered" caveat no longer applies.
+2. **Before that fix**, Pythia's A–B overlap was not above chance, and the reading was that the
+   above-chance result failed to replicate. It does replicate; the null was an artefact of the gate.
+3. **`logit_lens_diff` omitted the unembedding bias**, shifting every curve by a constant and
+   moving the zero crossing that the phase-transition measure keys on.
+4. **Category A was not counterbalanced** — `answer_A` was always the first-mentioned name, so
+   answer identity was confounded with position. It is now balanced across both sides.
+5. **Category B's template and counterbalance were perfectly correlated**, since both derived from
+   the same counter. They are now crossed.
 
 ---
 

@@ -36,6 +36,10 @@ def results_dir(model_name: str = "gpt2") -> Path:
 BATCH_KEY = ["category", "template_id", "n_tokens", "p_slot"]
 CATEGORIES = ["A", "B", "C"]
 
+# Manipulation check threshold, in logits. Items whose control-minus-conflict
+# swing is smaller than this are dropped before analysis.
+MIN_SWING = 1.0
+
 
 def _group_tensors(model, grp: pd.DataFrame):
     """Return (tokens_conflict, tokens_control, tok_A, tok_B, positions) for a group."""
@@ -188,6 +192,22 @@ def main(model_name: str = "gpt2", effect_floor: float = 0.05,
 
     print("\n[1/5] Patching, direct logit attribution, attention")
     effects, behav, desc = run_patching(model, admitted)
+
+    # Manipulation check: an item whose slot swap barely moves behaviour has no
+    # arbitration to explain, and its tiny denominator inflates every normalised
+    # effect computed from it. Pre-registered threshold, sign-symmetric.
+    weak = behav[behav.swing.abs() < MIN_SWING]
+    if len(weak):
+        print(f"  dropping {len(weak)} item(s) with |swing| < {MIN_SWING}: "
+              f"{', '.join(weak.item_id)}")
+        keep = set(behav[behav.swing.abs() >= MIN_SWING].item_id)
+        order = {c: list(behav[behav.category == c].item_id) for c in effects}
+        for c in effects:
+            mask = np.array([i in keep for i in order[c]])
+            effects[c] = effects[c][mask]
+            desc["dla"][c] = desc["dla"][c][mask]
+            desc["attn"][c] = desc["attn"][c][mask]
+        behav = behav[behav.swing.abs() >= MIN_SWING]
     behav.to_csv(RESULTS / "phase1" / "behavioural.csv", index=False)
     for c, e in effects.items():
         np.save(RESULTS / "phase1" / f"effects_{c}.npy", e)

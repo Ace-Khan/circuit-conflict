@@ -152,9 +152,8 @@ def fig_model_comparison() -> None:
     """
     The result across both models — the figure that decides the paper's claim.
 
-    The "below a shared mechanism" half replicates in both models. The "above
-    chance" half does not: it is weaker throughout in Pythia-410M and absent for
-    A-B.
+    Every pair sits above the chance floor and below the one-shared-mechanism
+    ceiling, in both models. Overlap is consistently lower in Pythia-410M.
     """
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), sharey=True)
     for ax, model in zip(axes, MODELS):
@@ -188,7 +187,7 @@ def fig_model_comparison() -> None:
     ]
     fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(.5, .04),
                ncol=4, fontsize=9, frameon=False)
-    fig.suptitle("Overlap is below a shared mechanism in both models; above chance only in GPT-2 Small",
+    fig.suptitle("Overlap sits above chance and below a shared mechanism, in both models",
                  fontsize=12.5, y=1.02)
     _save(fig, "fig0_model_comparison")
 

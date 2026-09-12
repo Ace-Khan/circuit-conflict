@@ -1,26 +1,26 @@
 {
   "A": {
-    "n_total": 13,
-    "n_detected": 10,
-    "detection_rate": 0.7692307692307693,
-    "mean": 5.1,
-    "std": 3.6347092196090616,
+    "n_total": 40,
+    "n_detected": 36,
+    "detection_rate": 0.9,
+    "mean": 6.222222222222222,
+    "std": 4.864513548495067,
     "median": 5.5
   },
   "B": {
     "n_total": 24,
     "n_detected": 23,
     "detection_rate": 0.9583333333333334,
-    "mean": 4.869565217391305,
-    "std": 4.454868101568389,
-    "median": 4.0
+    "mean": 5.043478260869565,
+    "std": 4.724003125908877,
+    "median": 3.0
   },
   "C": {
     "n_total": 22,
     "n_detected": 20,
     "detection_rate": 0.9090909090909091,
-    "mean": 5.6,
-    "std": 4.070432538764348,
-    "median": 5.0
+    "mean": 5.35,
+    "std": 4.19617620421761,
+    "median": 4.5
   }
 }

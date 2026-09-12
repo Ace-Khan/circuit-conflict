@@ -250,11 +250,15 @@ def logit_lens_diff(
     """
     n_layers = model.cfg.n_layers
     direction = answer_direction(model, token_A, token_B)
+    # The unembedding bias is part of the logit difference. Omitting it shifts the
+    # whole curve by a constant, which moves the zero crossing that
+    # detect_phase_transition keys on.
+    bias = (model.b_U[token_A] - model.b_U[token_B]).item()
     diffs = []
 
     for layer in range(n_layers):
         resid = cache["resid_post", layer][0, position]
         resid_ln = model.ln_final(resid.unsqueeze(0).unsqueeze(0))[0, 0]
-        diffs.append((resid_ln @ direction).item())
+        diffs.append((resid_ln @ direction).item() + bias)
 
     return np.array(diffs)
